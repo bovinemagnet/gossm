@@ -1,0 +1,18 @@
+= gossm
+A simple tool to list AWS instances by profile, and then execute the aws session-manager connect command.
+
+I needed a tool to utilise the `~/.aws/config` file to launch a session via  [AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/index.html) 
+to an instance in the cloud.
+
+Written in Go, this tool allows you to launch the aws cli ssm components.
+
+if you do not set an environment variable for the `AWS_PROFILE` it will interigate the ones found in `~/.aws/config` and allow you to pick one.  Once the profile is set, it will get a list of the EC2 instances. 
+
+usage:
+* export AWS_PROFILE=profile_name gossm
+
+You can further filter the list by specifying tag values, that will eb checked.
+
+eg `gossm prd web` will look for machines tagged with both `prd` and `web` and present you a list of instances. 
+
+NOTE: It does not check that the SSM agent is running on these instances.
