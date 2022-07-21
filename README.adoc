@@ -1,18 +1,64 @@
 = gossm
 A simple tool to list AWS instances by profile, and then execute the aws session-manager connect command.
 
-I needed a tool to utilise the `~/.aws/config` file to launch a session via  [AWS Systems Manager](https://docs.aws.amazon.com/systems-manager/index.html) 
+I needed a tool to utilise the `~/.aws/config` file to launch a session via  https://docs.aws.amazon.com/systems-manager/index.html[AWS Systems Manager]
 to an instance in the cloud.
 
 Written in Go, this tool allows you to launch the aws cli ssm components.
 
-if you do not set an environment variable for the `AWS_PROFILE` it will interigate the ones found in `~/.aws/config` and allow you to pick one.  Once the profile is set, it will get a list of the EC2 instances. 
+if you do not set an environment variable for the `AWS_PROFILE` it will interrogate the ones found in `~/.aws/config` and provide you a list to pick from before .
+
+Once the profile is set, it will get a list of the EC2 instances.
 
 usage:
-* export AWS_PROFILE=profile_name gossm
+`AWS_PROFILE=<profile_name> gossm`
+
+[source,shell]
+----
+[1]   i-AAAAAAAAAAAAAAAAA    svr1.example.com <1>
+[2]   i-BBBBBBBBBBBBBBBBBB   svr2.example.com
+[3]   i-CCCCCCCCCCCCCCCCCC   svr3.example.com
+Launch number:> 2 <2>
+----
+<1> The list of instances to pick from.
+<2> The command prompt to enter the number representing the list above.
+
+Once you select the instance, it will launch the session via the command line application, in the following way : `aws --profile <AWS_PROFILE> ssm start-session --target <i-BBBBBBBBBBBBBBBBBB>`
 
 You can further filter the list by specifying tag values, that will eb checked.
 
-eg `gossm prd web` will look for machines tagged with both `prd` and `web` and present you a list of instances. 
+eg `gossm prd web` will look for machines tagged with both `prd` and `web` and present you a list of instances.
 
 NOTE: It does not check that the SSM agent is running on these instances.
+
+
+== AWS Profiles
+
+Not really in scope for this tool, but I have a list of AWS profiles in `~/.aws/config` and the connection credentials are stored in `~/.aws/credentials`
+
+see AWS Documentation for more information on the `~/.aws/*` files.
+
+.Example: ~/.aws/config
+[source,shell]
+----
+[profile SAMPLE-PROFILE] <1>
+region = ap-southeast-2 <2>
+role_arn = arn:aws:iam::1234567890:role/FullAWSAccess <3>
+source_profile = sample-admin-account <4>
+----
+<1> Name of the profile, used by `gossm`.
+<2> The region to use for the profile.
+<3> The role to use for the profile.  This is the role in the account you want to utilise.
+<4> The account from the  `~/.aws/credentials` you want to use.
+
+
+.Example: ~/.aws/credentials
+[source,shell]
+----
+[sample-admin-account]  <1>
+aws_access_key_id = ABCD... <2>
+aws_secret_access_key = ABCD... <3>
+----
+<1>
+<2>
+<3>
