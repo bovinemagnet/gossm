@@ -71,3 +71,28 @@ To grab the latest build from github, run the following command.
 
 This will install the latest built version.
 
+IMPORTANT: Pressing ctrl-Z will suspend the gossm process not the process on the remote 
+
+
+== AWS CLI and SSM
+
+Remember to install https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html[AWS CLI] and https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html[AWS SSM] before using this tool. 
+
+On arch linux, I ran the following:
+
+=== ArchLinux
+
+.Install AWS CLI
+[source, bash]
+----
+sudo pacman -S aws-cli-v2
+----
+
+.Install AWS SSM Plugin
+----
+git clone https://aur.archlinux.org/aws-session-manager-plugin.git
+cd aws-session-manager-plugin
+makepkg -sri
+----
+
+NOTE: Check the steps, to ensure they match your environemnt.
