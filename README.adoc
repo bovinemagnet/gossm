@@ -59,6 +59,15 @@ source_profile = sample-admin-account <4>
 aws_access_key_id = ABCD... <2>
 aws_secret_access_key = ABCD... <3>
 ----
-<1>
-<2>
-<3>
+<1> the name you specify for the config, also used for the connection, eg `gossm sample-admin-acount`
+<2> access key from AWS
+<3> the secre from AWS
+
+== Simple Install
+
+To grab the latest build from github, run the following command.
+
+`go install github.com/bovinemagnet/gossm@latest` 
+
+This will install the latest built version.
+
