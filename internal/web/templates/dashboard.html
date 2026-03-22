@@ -1,0 +1,122 @@
+{{define "content"}}
+    <!-- Stats bar -->
+    <div id="stats-bar" sse-swap="stats" hx-swap="innerHTML">
+        {{template "stats.html" .}}
+    </div>
+
+    <!-- Session table -->
+    <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
+        <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-slate-200">Sessions</h2>
+            <button
+                hx-get="/api/sessions"
+                hx-target="#session-table-body"
+                hx-swap="innerHTML"
+                class="text-sm text-sky-400 hover:text-sky-300 transition-colors">
+                Refresh
+            </button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-slate-400 border-b border-slate-700">
+                        <th class="px-6 py-3 font-medium">Status</th>
+                        <th class="px-6 py-3 font-medium">Instance Name</th>
+                        <th class="px-6 py-3 font-medium">Instance ID</th>
+                        <th class="px-6 py-3 font-medium">Profile</th>
+                        <th class="px-6 py-3 font-medium">Type</th>
+                        <th class="px-6 py-3 font-medium">Ports</th>
+                        <th class="px-6 py-3 font-medium">Uptime</th>
+                        <th class="px-6 py-3 font-medium">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="session-table-body" sse-swap="sessions" hx-swap="innerHTML">
+                    {{template "session_list.html" .Sessions}}
+                </tbody>
+            </table>
+        </div>
+        {{if not .Sessions}}
+        <div id="empty-state" class="px-6 py-12 text-center text-slate-500">
+            No active sessions. Start one below.
+        </div>
+        {{end}}
+    </div>
+
+    <!-- New session form -->
+    <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
+        <div class="px-6 py-4 border-b border-slate-700">
+            <h2 class="text-lg font-semibold text-slate-200">Start New Session</h2>
+        </div>
+        <form hx-post="/api/sessions"
+              hx-target="#session-table-body"
+              hx-swap="innerHTML"
+              class="px-6 py-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Instance ID -->
+                <div>
+                    <label for="instance_id" class="block text-sm font-medium text-slate-400 mb-1">Instance ID</label>
+                    <input type="text" name="instance_id" id="instance_id" required
+                           placeholder="i-0123456789abcdef0"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                </div>
+
+                <!-- Instance Name -->
+                <div>
+                    <label for="instance_name" class="block text-sm font-medium text-slate-400 mb-1">Instance Name</label>
+                    <input type="text" name="instance_name" id="instance_name"
+                           placeholder="my-server"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                </div>
+
+                <!-- Profile -->
+                <div>
+                    <label for="profile" class="block text-sm font-medium text-slate-400 mb-1">AWS Profile</label>
+                    <input type="text" name="profile" id="profile"
+                           placeholder="default"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                </div>
+
+                <!-- Session Type -->
+                <div>
+                    <label for="type" class="block text-sm font-medium text-slate-400 mb-1">Type</label>
+                    <select name="type" id="type"
+                            class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                        <option value="shell">Shell</option>
+                        <option value="port-forward">Port Forward</option>
+                    </select>
+                </div>
+
+                <!-- Local Port -->
+                <div>
+                    <label for="local_port" class="block text-sm font-medium text-slate-400 mb-1">Local Port</label>
+                    <input type="number" name="local_port" id="local_port"
+                           placeholder="8080"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                </div>
+
+                <!-- Remote Port -->
+                <div>
+                    <label for="remote_port" class="block text-sm font-medium text-slate-400 mb-1">Remote Port</label>
+                    <input type="number" name="remote_port" id="remote_port"
+                           placeholder="80"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                </div>
+
+                <!-- Remote Host -->
+                <div>
+                    <label for="remote_host" class="block text-sm font-medium text-slate-400 mb-1">Remote Host</label>
+                    <input type="text" name="remote_host" id="remote_host"
+                           placeholder="localhost"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                </div>
+            </div>
+
+            <div class="mt-4 flex justify-end">
+                <button type="submit"
+                        class="bg-sky-600 hover:bg-sky-500 text-white font-medium px-4 py-2 rounded-md text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 focus:ring-offset-slate-800">
+                    Start Session
+                </button>
+            </div>
+        </form>
+    </div>
+{{end}}
