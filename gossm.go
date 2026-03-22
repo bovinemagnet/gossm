@@ -14,8 +14,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -27,6 +30,9 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "dev"
+
 var cmdProfile *string = pflag.StringP("profile", "p", os.Getenv("AWS_PROFILE"), "set the flag for the aws profile, otherwise it defaults to env.<AWS_PROFILE>:[env."+os.Getenv("AWS_PROFILE")+"]")
 var cmdFilters *[]string = pflag.StringSliceP("filter", "f", []string{}, "set the flag for the filter, as a comma separated list eg: `-f value1,value2`")
 var nameString string = "tag:Name"
@@ -34,6 +40,8 @@ var cmdLogger *bool = pflag.BoolP("logging", "l", false, "turn on logging")
 var cmdAvailabilityZone *bool = pflag.BoolP("az", "z", false, "display availability zone, default false")
 var cmdPrivateIp *bool = pflag.BoolP("ip", "i", false, "display internal ip address, default false")
 var cmdInstanceType *bool = pflag.BoolP("type", "y", false, "display instance type, default false")
+var cmdVersion *bool = pflag.BoolP("version", "v", false, "display version and exit")
+var cmdTarget *string = pflag.StringP("target", "t", "", "connect directly to an instance ID, skipping the instance list")
 
 type instancePosition struct {
 	num              int
@@ -41,6 +49,13 @@ type instancePosition struct {
 	instanceCount    int
 	instanceId       string
 	instanceName     string
+}
+
+// displayOptions controls which optional columns are shown in the instance listing.
+type displayOptions struct {
+	showInstanceType    bool
+	showAvailabilityZone bool
+	showPrivateIp       bool
 }
 
 // EC2DescribeInstancesAPI defines the interface for the DescribeInstances function.
@@ -52,40 +67,221 @@ type EC2DescribeInstancesAPI interface {
 }
 
 // GetInstances retrieves information about your Amazon Elastic Compute Cloud (Amazon EC2) instances.
-// Inputs:
-//     c is the context of the method call, which includes the AWS Region.
-//     api is the interface that defines the method call.
-//     input defines the input arguments to the service call.
-// Output:
-//     If success, a DescribeInstancesOutput object containing the result of the service call and nil.
-//     Otherwise, nil and an error from the call to DescribeInstances.
 func GetInstances(c context.Context, api EC2DescribeInstancesAPI, input *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 	return api.DescribeInstances(c, input)
 }
 
-// function to take an array of Tag and return the value for the key
+// GetValue returns the value of a tag by key (case-insensitive).
+// Returns an empty string if the key is not found or the tags slice is empty.
 func GetValue(key string, tags []types.Tag) string {
-
 	for _, tag := range tags {
-		if strings.ToUpper(*tag.Key) == strings.ToUpper(key) {
+		if tag.Key != nil && tag.Value != nil && strings.EqualFold(*tag.Key, key) {
 			log.Info().Msg("Found tag: " + *tag.Key + ":" + *tag.Value)
 			return *tag.Value
 		}
 	}
-	// if the length is < 1 then return an empty string. else return the first value
-	if len(tags) < 1 {
-		log.Info().Msg("no tags found for key: " + key)
-		return ""
-	} else {
-		log.Info().Msg("return first tag: " + *tags[0].Key + ":" + *tags[0].Value)
-		return *tags[0].Value
+	return ""
+}
+
+// buildFilters creates the EC2 filter list from flag filters and positional arguments.
+// It always includes a filter for running instances.
+func buildFilters(flagFilters []string, positionalArgs []string) []types.Filter {
+	// Always filter to running instances only.
+	stateFilterName := "instance-state-name"
+	filters := []types.Filter{
+		{Name: &stateFilterName, Values: []string{"running"}},
 	}
 
+	// Merge flag filters and positional args.
+	allFilters := append([]string{}, flagFilters...)
+	allFilters = append(allFilters, positionalArgs...)
+
+	if len(allFilters) > 0 {
+		fmt.Println("Applying Filters:", allFilters)
+		// Wrap each value with wildcards for substring matching.
+		wildcarded := make([]string, len(allFilters))
+		for i, v := range allFilters {
+			wildcarded[i] = "*" + v + "*"
+		}
+		filters = append(filters, types.Filter{Name: &nameString, Values: wildcarded})
+	}
+
+	return filters
+}
+
+// safeString dereferences a string pointer, returning a fallback if nil.
+func safeString(s *string, fallback string) string {
+	if s == nil {
+		return fallback
+	}
+	return *s
+}
+
+// listInstances prints the instance list using tabwriter and returns the position map.
+func listInstances(result *ec2.DescribeInstancesOutput, opts displayOptions) map[int]instancePosition {
+	instancePositions := make(map[int]instancePosition)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+
+	counter := 0
+	reservationCount := 0
+	for _, r := range result.Reservations {
+		instanceCount := 0
+		reservationCount++
+		for _, inst := range r.Instances {
+			instanceCount++
+			counter++
+
+			instanceId := safeString(inst.InstanceId, "N/A")
+			instanceName := GetValue("name", inst.Tags)
+			state := string(inst.State.Name)
+
+			fmt.Fprintf(w, "[%d]\t%s\t%s\t%s", counter, instanceId, instanceName, state)
+
+			if opts.showInstanceType {
+				fmt.Fprintf(w, "\t%s", string(inst.InstanceType))
+			}
+			if opts.showAvailabilityZone {
+				az := ""
+				if inst.Placement != nil {
+					az = safeString(inst.Placement.AvailabilityZone, "")
+				}
+				fmt.Fprintf(w, "\t%s", az)
+			}
+			if opts.showPrivateIp {
+				fmt.Fprintf(w, "\t%s", safeString(inst.PrivateIpAddress, "N/A"))
+			}
+			fmt.Fprintln(w)
+
+			instancePositions[counter] = instancePosition{
+				num:              counter,
+				reservationCount: reservationCount,
+				instanceCount:    instanceCount,
+				instanceId:       instanceId,
+				instanceName:     instanceName,
+			}
+		}
+	}
+	w.Flush()
+
+	return instancePositions
+}
+
+// promptUser asks the user to select an instance number. Returns the chosen number.
+func promptUser(scanner *bufio.Scanner, max int) (int, error) {
+	fmt.Print("Launch number: [Q/q:Quit] > ")
+	scanner.Scan()
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("error reading input: %w", err)
+	}
+
+	text := strings.TrimSpace(scanner.Text())
+	log.Info().Msg("Selected: [" + text + "]")
+
+	// Check for quit.
+	switch strings.ToLower(text) {
+	case "q", "e":
+		fmt.Println("Exiting...")
+		os.Exit(0)
+	}
+
+	num, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, fmt.Errorf("invalid launch number: %s", text)
+	}
+	if num < 1 || num > max {
+		return 0, fmt.Errorf("launch number %d out of range (1-%d)", num, max)
+	}
+	return num, nil
+}
+
+// launchSession executes the aws ssm start-session command for the given instance.
+func launchSession(profile, instanceId string) error {
+	fmt.Printf("running command:> aws --profile %s ssm start-session --target %s\n", profile, instanceId)
+	cmd := exec.Command("aws", "--profile", profile, "ssm", "start-session", "--target", instanceId)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// parseAWSProfiles reads ~/.aws/config and returns a list of profile names.
+func parseAWSProfiles() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	configPath := filepath.Join(home, ".aws", "config")
+	f, err := os.Open(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open %s: %w", configPath, err)
+	}
+	defer f.Close()
+
+	var profiles []string
+	profileRegex := regexp.MustCompile(`^\[profile\s+(.+)\]$`)
+	defaultRegex := regexp.MustCompile(`^\[default\]$`)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if matches := profileRegex.FindStringSubmatch(line); matches != nil {
+			profiles = append(profiles, matches[1])
+		} else if defaultRegex.MatchString(line) {
+			profiles = append(profiles, "default")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading %s: %w", configPath, err)
+	}
+	return profiles, nil
+}
+
+// promptProfile displays available AWS profiles and lets the user pick one.
+func promptProfile(scanner *bufio.Scanner) (string, error) {
+	profiles, err := parseAWSProfiles()
+	if err != nil {
+		return "", err
+	}
+	if len(profiles) == 0 {
+		return "", fmt.Errorf("no profiles found in ~/.aws/config")
+	}
+
+	fmt.Println("Available AWS Profiles:")
+	for i, p := range profiles {
+		fmt.Printf("[%d]   %s\n", i+1, p)
+	}
+	fmt.Print("Select profile: [Q/q:Quit] > ")
+	scanner.Scan()
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading input: %w", err)
+	}
+
+	text := strings.TrimSpace(scanner.Text())
+	switch strings.ToLower(text) {
+	case "q", "e":
+		fmt.Println("Exiting...")
+		os.Exit(0)
+	}
+
+	num, err := strconv.Atoi(text)
+	if err != nil {
+		return "", fmt.Errorf("invalid selection: %s", text)
+	}
+	if num < 1 || num > len(profiles) {
+		return "", fmt.Errorf("selection %d out of range (1-%d)", num, len(profiles))
+	}
+	return profiles[num-1], nil
 }
 
 func main() {
 	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
 	pflag.Parse()
+
+	// Handle --version.
+	if *cmdVersion {
+		fmt.Printf("gossm version %s\n", version)
+		os.Exit(0)
+	}
 
 	if *cmdLogger {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
@@ -93,134 +289,80 @@ func main() {
 		zerolog.SetGlobalLevel(zerolog.WarnLevel)
 	}
 
-	// Set the environment variable for the AWS profile.
-	if *cmdProfile != "" {
-		os.Setenv("AWS_PROFILE", *cmdProfile)
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// If no profile set, prompt the user to pick one.
+	if *cmdProfile == "" {
+		profile, err := promptProfile(scanner)
+		if err != nil {
+			log.Fatal().Msg(err.Error())
+		}
+		*cmdProfile = profile
 	}
 
-	// Check for filters.
-	if len(*cmdFilters) > 0 {
-		fmt.Println("Applying Filters:", *cmdFilters)
-		// loop through array of strings, add * to each string.
-		// as this allows the AWS filter to match the string.
-		for i, v := range *cmdFilters {
-			(*cmdFilters)[i] = "*" + v + "*"
+	// Set the environment variable for the AWS profile.
+	os.Setenv("AWS_PROFILE", *cmdProfile)
+
+	// Direct-connect mode: skip listing, connect immediately.
+	if *cmdTarget != "" {
+		profile := os.Getenv("AWS_PROFILE")
+		if err := launchSession(profile, *cmdTarget); err != nil {
+			log.Fatal().Msg(err.Error())
 		}
+		return
 	}
+
+	// Build filters from both -f flag and positional arguments.
+	filters := buildFilters(*cmdFilters, pflag.Args())
 
 	cfg, err := awsConfig.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		log.Fatal().Msg("configuration error" + err.Error())
-		panic("configuration error, " + err.Error())
+		log.Fatal().Msg("configuration error: " + err.Error())
 	}
 
 	client := ec2.NewFromConfig(cfg)
 
-	var input *ec2.DescribeInstancesInput
+	// Use paginator to handle large result sets.
+	input := &ec2.DescribeInstancesInput{Filters: filters}
+	paginator := ec2.NewDescribeInstancesPaginator(client, input)
 
-	// Create the input object for the DescribeInstances call.
-	if len(*cmdFilters) > 0 {
-		// if the filters slice is not empty, then create an ec2 filter list
-		ec2Filters := make([]types.Filter, 1)
-		ec2Filters[0] = types.Filter{Name: &nameString, Values: *cmdFilters}
-		input = &ec2.DescribeInstancesInput{Filters: ec2Filters}
-	} else {
-		input = &ec2.DescribeInstancesInput{}
+	// Collect all reservations across pages.
+	var allReservations []types.Reservation
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(context.TODO())
+		if err != nil {
+			fmt.Println("ERROR: Got an error retrieving information about your Amazon EC2 instances:")
+			fmt.Println(err)
+			return
+		}
+		allReservations = append(allReservations, page.Reservations...)
 	}
-	result, err := GetInstances(context.TODO(), client, input)
-	if err != nil {
-		fmt.Println("ERROR: Got an error retrieving information about your Amazon EC2 instances:")
-		fmt.Println(err)
+
+	combinedResult := &ec2.DescribeInstancesOutput{Reservations: allReservations}
+
+	opts := displayOptions{
+		showInstanceType:    *cmdInstanceType,
+		showAvailabilityZone: *cmdAvailabilityZone,
+		showPrivateIp:       *cmdPrivateIp,
+	}
+
+	instancePositions := listInstances(combinedResult, opts)
+
+	if len(instancePositions) == 0 {
+		fmt.Println("No running instances found.")
 		return
 	}
 
-	// create a map to store the of instance information
-	instancePositions := make(map[int]instancePosition)
-
-	// Instance counter
-	counter := 0
-	// Reservation counter, as instances sit within reservations.
-	reservationCount := 0
-	// Loop through the reservations looking for instances.
-	for _, r := range result.Reservations {
-		//fmt.Println("Reservation ID: " + *r.ReservationId)
-		//fmt.Println("Instance IDs:")
-		instanceCount := 0
-		reservationCount++
-		for _, i := range r.Instances {
-			instanceCount++
-			counter++
-			fmt.Printf("[%d]", counter)
-			fmt.Print("   " + *i.InstanceId)
-			fmt.Print("   " + GetValue("name", i.Tags))
-			if *cmdInstanceType {
-				fmt.Print("   " + i.InstanceType.Values()[0])
-			}
-			if *cmdAvailabilityZone {
-				fmt.Print("   " + *i.Placement.AvailabilityZone)
-			}
-			// display internal IP address
-			if *cmdPrivateIp {
-				fmt.Print("   " + *i.PrivateIpAddress)
-			}
-			// create a new instancePosition
-			instancePosition := instancePosition{num: counter, reservationCount: reservationCount, instanceCount: instanceCount, instanceId: *i.InstanceId, instanceName: GetValue("name", i.Tags)}
-			// add instancePostion to the map
-			instancePositions[counter] = instancePosition
-		}
-		fmt.Println("")
-	}
-	// Wait for user input before continuing
-	fmt.Print("Launch number: [Q/q:Quit] > ")
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	err = scanner.Err()
-	// check for error in input.
+	launchNumber, err := promptUser(scanner, len(instancePositions))
 	if err != nil {
-		log.Fatal().Msg(err.Error())
-	}
-	// Get the user input.
-	log.Info().Msg("Selected: [" + scanner.Text() + "]")
-
-	// get the integer from the user input.
-	launchNumber := scanner.Text()
-	//	if launch number is Q or q then exit.
-	if launchNumber == "Q" || launchNumber == "q" || launchNumber == "e" || launchNumber == "E" {
-		fmt.Println("Exiting...")
-		os.Exit(0)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
-	// validate that launchNumber is an integer
-	// convert the string to an integer.
-	launchNumberValue, err := strconv.Atoi(launchNumber)
-	if err != nil {
-		fmt.Printf("Invalid launch number: %s\n", launchNumber)
-		// this catches cases of entering the wrong value
-		log.Fatal().Msg(err.Error())
-	}
-	// validate that the integer is in the range of 1 to the number of instances.
-	if launchNumberValue < 1 || launchNumberValue > counter {
-		fmt.Printf("Invalid launch number: %d\n", launchNumberValue)
-	}
+	log.Info().Msg("Selected Instance: " + instancePositions[launchNumber].instanceId)
 
-	// get the instance ID from the result.
-	log.Info().Msg("Selected Instance: " + instancePositions[launchNumberValue].instanceId)
-
-	// get the environmental variable for AWS_PROFILE
 	profile := os.Getenv("AWS_PROFILE")
-	// launch ssm-agent to connect to instance
-	fmt.Printf("running command:> aws --profile %s ssm start-session --target %s", profile, instancePositions[launchNumberValue].instanceId)
-	fmt.Println()
-	// run go.exec of the command line
-	cmd := exec.Command("aws", "--profile", profile, "ssm", "start-session", "--target", instancePositions[launchNumberValue].instanceId)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	// run the command
-	err = cmd.Run()
-	if err != nil {
+	if err := launchSession(profile, instancePositions[launchNumber].instanceId); err != nil {
 		log.Fatal().Msg(err.Error())
 	}
-
 }
