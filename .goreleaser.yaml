@@ -21,7 +21,9 @@ builds:
         goarch: 386
       - goos: linux
         goarch: 386
-    main: ./gossm.go
+    main: .
+    ldflags:
+      - -s -w -X github.com/bovinemagnet/gossm/cmd.Version={{.Version}}
 archives:
   - replacements:
       darwin: Darwin

@@ -1,0 +1,26 @@
+{{define "stats.html"}}
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <!-- Active sessions -->
+    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 shadow-lg">
+        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Active Sessions</div>
+        <div class="flex items-center space-x-2">
+            <span class="text-2xl font-bold text-sky-400">{{.SessionCount}}</span>
+            {{if gt .SessionCount 0}}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-900 text-green-300">live</span>
+            {{end}}
+        </div>
+    </div>
+
+    <!-- Uptime -->
+    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 shadow-lg">
+        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Daemon Uptime</div>
+        <div class="text-2xl font-bold text-slate-200">{{.Uptime}}</div>
+    </div>
+
+    <!-- Sparkline -->
+    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 shadow-lg">
+        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Session History</div>
+        <div class="mt-1">{{.SparkSVG}}</div>
+    </div>
+</div>
+{{end}}
