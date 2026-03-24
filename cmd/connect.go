@@ -24,6 +24,9 @@ var (
 	connectShowInstanceType bool
 	connectShowAZ           bool
 	connectShowIP           bool
+	connectLocalPort        int
+	connectRemotePort       int
+	connectRemoteHost       string
 )
 
 var connectCmd = &cobra.Command{
@@ -40,6 +43,9 @@ func init() {
 	connectCmd.Flags().BoolVarP(&connectShowInstanceType, "type", "y", false, "display instance type")
 	connectCmd.Flags().BoolVarP(&connectShowAZ, "az", "z", false, "display availability zone")
 	connectCmd.Flags().BoolVarP(&connectShowIP, "ip", "i", false, "display private IP address")
+	connectCmd.Flags().IntVar(&connectLocalPort, "local-port", 0, "local port for port forwarding")
+	connectCmd.Flags().IntVar(&connectRemotePort, "remote-port", 0, "remote port for port forwarding")
+	connectCmd.Flags().StringVar(&connectRemoteHost, "remote-host", "", "remote host for port forwarding (default: localhost)")
 
 	rootCmd.AddCommand(connectCmd)
 }
@@ -58,12 +64,32 @@ func runConnect(cmd *cobra.Command, args []string) {
 
 	os.Setenv("AWS_PROFILE", connectProfile)
 
+	sessionType := "shell"
+	if connectLocalPort != 0 || connectRemotePort != 0 {
+		sessionType = "port-forward"
+	}
+
 	// Direct-connect mode.
 	if connectTarget != "" {
-		if err := awsutil.LaunchSession(connectProfile, connectTarget); err != nil {
+		launchOpts := awsutil.LaunchOpts{
+			Profile:    connectProfile,
+			InstanceID: connectTarget,
+			Type:       sessionType,
+			LocalPort:  connectLocalPort,
+			RemotePort: connectRemotePort,
+			RemoteHost: connectRemoteHost,
+		}
+		if err := awsutil.LaunchSession(launchOpts); err != nil {
 			log.Fatal().Msg(err.Error())
 		}
-		tryRegisterWithDaemon(connectTarget, "", connectProfile, "shell")
+		tryRegisterWithDaemon(daemon.RegisterOpts{
+			InstanceID:  connectTarget,
+			Profile:     connectProfile,
+			SessionType: sessionType,
+			LocalPort:   connectLocalPort,
+			RemotePort:  connectRemotePort,
+			RemoteHost:  connectRemoteHost,
+		})
 		return
 	}
 
@@ -115,18 +141,35 @@ func runConnect(cmd *cobra.Command, args []string) {
 	selected := instancePositions[launchNumber]
 	log.Info().Msg("Selected Instance: " + selected.InstanceID)
 
-	if err := awsutil.LaunchSession(connectProfile, selected.InstanceID); err != nil {
+	launchOpts := awsutil.LaunchOpts{
+		Profile:    connectProfile,
+		InstanceID: selected.InstanceID,
+		Type:       sessionType,
+		LocalPort:  connectLocalPort,
+		RemotePort: connectRemotePort,
+		RemoteHost: connectRemoteHost,
+	}
+	if err := awsutil.LaunchSession(launchOpts); err != nil {
 		log.Fatal().Msg(err.Error())
 	}
 
-	tryRegisterWithDaemon(selected.InstanceID, selected.InstanceName, connectProfile, "shell")
+	tryRegisterWithDaemon(daemon.RegisterOpts{
+		InstanceID:   selected.InstanceID,
+		InstanceName: selected.InstanceName,
+		Profile:      connectProfile,
+		SessionType:  sessionType,
+		LocalPort:    connectLocalPort,
+		RemotePort:   connectRemotePort,
+		RemoteHost:   connectRemoteHost,
+	})
 }
 
 // tryRegisterWithDaemon attempts to register this session with a running daemon.
 // Silently does nothing if the daemon is not running.
-func tryRegisterWithDaemon(instanceID, instanceName, profile, sessionType string) {
+func tryRegisterWithDaemon(opts daemon.RegisterOpts) {
 	cfg := goconfig.Load()
-	err := daemon.RegisterWithDaemon(cfg, instanceID, instanceName, profile, os.Getpid(), sessionType)
+	opts.PID = os.Getpid()
+	err := daemon.RegisterWithDaemon(cfg, opts)
 	if err != nil {
 		log.Debug().Err(err).Msg("could not register with daemon (not running?)")
 	}

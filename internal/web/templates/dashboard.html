@@ -35,12 +35,40 @@
                 </tbody>
             </table>
         </div>
-        {{if not .Sessions}}
-        <div id="empty-state" class="px-6 py-12 text-center text-slate-500">
-            No active sessions. Start one below.
-        </div>
-        {{end}}
     </div>
+
+    {{if .Presets}}
+    <!-- Saved session presets -->
+    <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
+        <div class="px-6 py-4 border-b border-slate-700">
+            <h2 class="text-lg font-semibold text-slate-200">Saved Sessions</h2>
+        </div>
+        <div class="px-6 py-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {{range $i, $p := .Presets}}
+            <div class="bg-slate-750 border border-slate-600 rounded-lg p-4 flex items-center justify-between hover:border-sky-500 transition-colors">
+                <div>
+                    <div class="font-medium text-slate-200">{{if $p.Name}}{{$p.Name}}{{else}}Preset {{$i}}{{end}}</div>
+                    <div class="text-xs text-slate-400 mt-1">
+                        {{$p.InstanceName}}
+                        <span class="text-slate-500">{{$p.Profile}}</span>
+                        {{if eq $p.SessionType "port-forward"}}
+                        <span class="text-emerald-400">:{{$p.LocalPort}}→{{$p.RemotePort}}</span>
+                        {{else}}
+                        <span class="text-indigo-400">shell</span>
+                        {{end}}
+                    </div>
+                </div>
+                <button hx-post="/api/presets/{{$i}}/start"
+                        hx-target="#session-table-body"
+                        hx-swap="innerHTML"
+                        class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium px-3 py-1.5 rounded transition-colors">
+                    Start
+                </button>
+            </div>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
 
     <!-- New session form -->
     <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
@@ -51,29 +79,56 @@
               hx-target="#session-table-body"
               hx-swap="innerHTML"
               class="px-6 py-4">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <!-- Instance ID -->
-                <div>
-                    <label for="instance_id" class="block text-sm font-medium text-slate-400 mb-1">Instance ID</label>
-                    <input type="text" name="instance_id" id="instance_id" required
-                           placeholder="i-0123456789abcdef0"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                </div>
 
-                <!-- Instance Name -->
-                <div>
-                    <label for="instance_name" class="block text-sm font-medium text-slate-400 mb-1">Instance Name</label>
-                    <input type="text" name="instance_name" id="instance_name"
-                           placeholder="my-server"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                </div>
-
-                <!-- Profile -->
+            <!-- Row 1: Profile, filter, and instance picker -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- AWS Profile -->
                 <div>
                     <label for="profile" class="block text-sm font-medium text-slate-400 mb-1">AWS Profile</label>
-                    <input type="text" name="profile" id="profile"
+                    <input type="text" name="profile" id="profile" list="profile-list"
                            placeholder="default"
+                           hx-get="/api/instances"
+                           hx-trigger="change, keyup changed delay:500ms"
+                           hx-target="#instance-picker"
+                           hx-include="#filter"
                            class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                    <datalist id="profile-list" hx-get="/api/profiles" hx-trigger="load" hx-swap="innerHTML"></datalist>
+                </div>
+
+                <!-- Name Filter -->
+                <div>
+                    <label for="filter" class="block text-sm font-medium text-slate-400 mb-1">Filter by Name</label>
+                    <input type="text" name="filter" id="filter"
+                           placeholder="web, api..."
+                           hx-get="/api/instances"
+                           hx-trigger="keyup changed delay:500ms"
+                           hx-target="#instance-picker"
+                           hx-include="#profile"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
+                </div>
+            </div>
+
+            <!-- Instance picker (populated by HTMX) -->
+            <div id="instance-picker" class="mt-4">
+                <div class="text-slate-500 p-4 text-sm">Enter an AWS profile above to browse instances.</div>
+            </div>
+
+            <!-- Row 2: Selected instance (read-only) and session options -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+                <!-- Instance ID (populated by picker click) -->
+                <div>
+                    <label for="instance_id" class="block text-sm font-medium text-slate-400 mb-1">Instance ID</label>
+                    <input type="text" name="instance_id" id="instance_id" required readonly
+                           placeholder="Select an instance above"
+                           class="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 text-sm cursor-not-allowed">
+                </div>
+
+                <!-- Instance Name (populated by picker click) -->
+                <div>
+                    <label for="instance_name" class="block text-sm font-medium text-slate-400 mb-1">Instance Name</label>
+                    <input type="text" name="instance_name" id="instance_name" readonly
+                           placeholder="Selected automatically"
+                           class="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 text-sm cursor-not-allowed">
                 </div>
 
                 <!-- Session Type -->

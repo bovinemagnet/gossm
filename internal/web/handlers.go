@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"math"
@@ -10,6 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+
+	awsutil "github.com/bovinemagnet/gossm/internal/aws"
+	"github.com/bovinemagnet/gossm/internal/config"
 	"github.com/bovinemagnet/gossm/internal/session"
 )
 
@@ -20,6 +25,7 @@ type DashboardData struct {
 	Uptime       string
 	Port         int
 	SparkSVG     template.HTML
+	Presets      []config.SessionPreset
 }
 
 // handleDashboard renders the full dashboard page.
@@ -98,10 +104,109 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 	s.handleSessionsList(w, r)
 }
 
-// handleInstances is a placeholder for the instance picker partial.
+// handleInstances queries EC2 for running instances and returns the instance
+// picker partial. Query params: profile (required), filter (optional).
 func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
+	profile := r.URL.Query().Get("profile")
+	if profile == "" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="text-slate-500 p-4 text-sm">Enter an AWS profile above to browse instances.</div>`)
+		return
+	}
+
+	if s.ec2Factory == nil {
+		http.Error(w, "AWS not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	ctx := r.Context()
+	client, err := s.ec2Factory(ctx, profile)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create AWS client: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Build filters: always running instances, optionally filtered by name.
+	filter := r.URL.Query().Get("filter")
+	var filterArgs []string
+	if filter != "" {
+		filterArgs = strings.Split(filter, ",")
+	}
+	filters := awsutil.BuildFilters(nil, filterArgs)
+	input := &ec2.DescribeInstancesInput{Filters: filters}
+
+	result, err := awsutil.GetInstances(ctx, client, input)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to list instances: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	instances := awsutil.ExtractInstances(result)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<div class="text-slate-400 p-4">Instance picker coming soon</div>`)
+	if err := s.tmpl.ExecuteTemplate(w, "instance_picker.html", instances); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleProfiles returns <option> elements for AWS profiles found in ~/.aws/config.
+func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	profiles, err := awsutil.ParseAWSProfiles()
+	if err != nil {
+		// Not fatal — just return an empty list.
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	for _, p := range profiles {
+		fmt.Fprintf(w, "<option value=\"%s\">\n", template.HTMLEscapeString(p))
+	}
+}
+
+// handlePreset returns a preset's data as a JSON object for client-side form filling.
+func (s *Server) handlePreset(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 0 || idx >= len(s.cfg.Presets) {
+		http.Error(w, "invalid preset index", http.StatusBadRequest)
+		return
+	}
+	p := s.cfg.Presets[idx]
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(p)
+}
+
+// handleStartPreset starts a session directly from a preset by index.
+func (s *Server) handleStartPreset(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 0 || idx >= len(s.cfg.Presets) {
+		http.Error(w, "invalid preset index", http.StatusBadRequest)
+		return
+	}
+	p := s.cfg.Presets[idx]
+
+	sessionType := session.TypeShell
+	if p.SessionType == "port-forward" {
+		sessionType = session.TypePortForward
+	}
+
+	opts := session.SessionOpts{
+		InstanceID:   p.InstanceID,
+		InstanceName: p.InstanceName,
+		Profile:      p.Profile,
+		Type:         sessionType,
+		LocalPort:    p.LocalPort,
+		RemotePort:   p.RemotePort,
+		RemoteHost:   p.RemoteHost,
+	}
+
+	if _, err := s.sm.StartSession(opts); err != nil {
+		http.Error(w, fmt.Sprintf("failed to start session: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	s.handleSessionsList(w, r)
 }
 
 // handleEvents is the SSE endpoint. It registers with the broker and streams
@@ -161,6 +266,7 @@ func (s *Server) buildDashboardData() DashboardData {
 		Uptime:       uptimeSince(s.startedAt),
 		Port:         s.cfg.DashboardPort,
 		SparkSVG:     template.HTML(renderSparkSVG(s.sm.SparkData())),
+		Presets:      s.cfg.Presets,
 	}
 }
 

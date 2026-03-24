@@ -10,11 +10,26 @@ import (
 	"strings"
 )
 
+// SessionPreset defines a saved session that can be started from the dashboard.
+type SessionPreset struct {
+	Name         string
+	InstanceID   string
+	InstanceName string
+	Profile      string
+	SessionType  string // "shell" or "port-forward"
+	LocalPort    int
+	RemotePort   int
+	RemoteHost   string
+}
+
 // Config holds the application configuration.
 type Config struct {
 	DashboardPort int
 	LogLevel      string
 	PIDDir        string
+
+	// Saved session presets loaded from config files.
+	Presets []SessionPreset
 }
 
 // DefaultConfig returns a Config with compiled defaults.
@@ -84,6 +99,55 @@ func applyKeyValue(key, value string, cfg *Config) {
 		cfg.LogLevel = value
 	case "GOSSM_PID_DIR":
 		cfg.PIDDir = value
+	default:
+		// Handle session presets: GOSSM_SESSION_<N>_<FIELD>=value
+		applyPresetKey(key, value, cfg)
+	}
+}
+
+// applyPresetKey handles GOSSM_SESSION_<N>_<FIELD> keys.
+func applyPresetKey(key, value string, cfg *Config) {
+	upper := strings.ToUpper(key)
+	if !strings.HasPrefix(upper, "GOSSM_SESSION_") {
+		return
+	}
+	// Strip prefix, leaving e.g. "1_NAME" or "2_INSTANCE_ID"
+	rest := upper[len("GOSSM_SESSION_"):]
+	// Split on first underscore to get the index.
+	idxStr, field, ok := strings.Cut(rest, "_")
+	if !ok {
+		return
+	}
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil || idx < 1 {
+		return
+	}
+	// Ensure the presets slice is large enough.
+	for len(cfg.Presets) < idx {
+		cfg.Presets = append(cfg.Presets, SessionPreset{})
+	}
+	p := &cfg.Presets[idx-1]
+	switch field {
+	case "NAME":
+		p.Name = value
+	case "INSTANCE_ID":
+		p.InstanceID = value
+	case "INSTANCE_NAME":
+		p.InstanceName = value
+	case "PROFILE":
+		p.Profile = value
+	case "TYPE":
+		p.SessionType = value
+	case "LOCAL_PORT":
+		if port, err := strconv.Atoi(value); err == nil {
+			p.LocalPort = port
+		}
+	case "REMOTE_PORT":
+		if port, err := strconv.Atoi(value); err == nil {
+			p.RemotePort = port
+		}
+	case "REMOTE_HOST":
+		p.RemoteHost = value
 	}
 }
 
@@ -101,6 +165,14 @@ func applyEnv(cfg *Config) {
 		"GOSSM_PID_DIR": func(v string) {
 			cfg.PIDDir = v
 		},
+	}
+
+	// Also scan all env vars for GOSSM_SESSION_* presets.
+	for _, env := range os.Environ() {
+		k, v, ok := strings.Cut(env, "=")
+		if ok && strings.HasPrefix(strings.ToUpper(k), "GOSSM_SESSION_") {
+			applyPresetKey(k, v, cfg)
+		}
 	}
 
 	for envKey, setter := range envMappings {

@@ -39,6 +39,9 @@ type registerRequest struct {
 	Profile      string `json:"profile"`
 	PID          int    `json:"pid"`
 	Type         string `json:"type"`
+	LocalPort    int    `json:"local_port,omitempty"`
+	RemotePort   int    `json:"remote_port,omitempty"`
+	RemoteHost   string `json:"remote_host,omitempty"`
 }
 
 // NewIPCServer creates a Unix socket listener at cfg.SocketPath(), removing
@@ -150,6 +153,9 @@ func (s *IPCServer) handleRegister(req IPCRequest) IPCResponse {
 		InstanceName: r.InstanceName,
 		Profile:      r.Profile,
 		Type:         sessionType,
+		LocalPort:    r.LocalPort,
+		RemotePort:   r.RemotePort,
+		RemoteHost:   r.RemoteHost,
 	}
 
 	sessionID := s.sm.RegisterExternal(opts, r.PID)

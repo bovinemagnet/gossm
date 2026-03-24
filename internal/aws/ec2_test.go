@@ -182,6 +182,102 @@ func TestGetInstances_MockError(t *testing.T) {
 	}
 }
 
+// --- ExtractInstances tests ---
+
+func TestExtractInstances_MultipleInstances(t *testing.T) {
+	output := &ec2.DescribeInstancesOutput{
+		Reservations: []types.Reservation{
+			{
+				Instances: []types.Instance{
+					{
+						InstanceId:       aws.String("i-aaa"),
+						Tags:             []types.Tag{{Key: aws.String("Name"), Value: aws.String("alpha")}},
+						State:            &types.InstanceState{Name: types.InstanceStateNameRunning},
+						InstanceType:     types.InstanceTypeT3Micro,
+						PrivateIpAddress: aws.String("10.0.0.1"),
+						Placement:        &types.Placement{AvailabilityZone: aws.String("eu-west-1a")},
+					},
+					{
+						InstanceId:       aws.String("i-bbb"),
+						Tags:             []types.Tag{{Key: aws.String("Name"), Value: aws.String("bravo")}},
+						State:            &types.InstanceState{Name: types.InstanceStateNameRunning},
+						InstanceType:     types.InstanceTypeT3Small,
+						PrivateIpAddress: aws.String("10.0.0.2"),
+						Placement:        &types.Placement{AvailabilityZone: aws.String("eu-west-1b")},
+					},
+				},
+			},
+		},
+	}
+	instances := ExtractInstances(output)
+	if len(instances) != 2 {
+		t.Fatalf("expected 2 instances, got %d", len(instances))
+	}
+	if instances[0].InstanceID != "i-aaa" {
+		t.Errorf("instances[0].InstanceID = %q, want %q", instances[0].InstanceID, "i-aaa")
+	}
+	if instances[0].InstanceName != "alpha" {
+		t.Errorf("instances[0].InstanceName = %q, want %q", instances[0].InstanceName, "alpha")
+	}
+	if instances[0].InstanceType != "t3.micro" {
+		t.Errorf("instances[0].InstanceType = %q, want %q", instances[0].InstanceType, "t3.micro")
+	}
+	if instances[0].PrivateIP != "10.0.0.1" {
+		t.Errorf("instances[0].PrivateIP = %q, want %q", instances[0].PrivateIP, "10.0.0.1")
+	}
+	if instances[0].AZ != "eu-west-1a" {
+		t.Errorf("instances[0].AZ = %q, want %q", instances[0].AZ, "eu-west-1a")
+	}
+	if instances[1].InstanceID != "i-bbb" {
+		t.Errorf("instances[1].InstanceID = %q, want %q", instances[1].InstanceID, "i-bbb")
+	}
+}
+
+func TestExtractInstances_NilFields(t *testing.T) {
+	output := &ec2.DescribeInstancesOutput{
+		Reservations: []types.Reservation{
+			{
+				Instances: []types.Instance{
+					{
+						InstanceId: nil,
+						Tags:       nil,
+						State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
+						Placement:  nil,
+					},
+				},
+			},
+		},
+	}
+	instances := ExtractInstances(output)
+	if len(instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(instances))
+	}
+	if instances[0].InstanceID != "N/A" {
+		t.Errorf("InstanceID = %q, want %q", instances[0].InstanceID, "N/A")
+	}
+	if instances[0].InstanceName != "" {
+		t.Errorf("InstanceName = %q, want empty", instances[0].InstanceName)
+	}
+	if instances[0].AZ != "" {
+		t.Errorf("AZ = %q, want empty", instances[0].AZ)
+	}
+}
+
+func TestExtractInstances_EmptyOutput(t *testing.T) {
+	output := &ec2.DescribeInstancesOutput{}
+	instances := ExtractInstances(output)
+	if len(instances) != 0 {
+		t.Errorf("expected 0 instances, got %d", len(instances))
+	}
+}
+
+func TestExtractInstances_NilOutput(t *testing.T) {
+	instances := ExtractInstances(nil)
+	if instances != nil {
+		t.Errorf("expected nil, got %v", instances)
+	}
+}
+
 // --- ListInstances tests ---
 
 func TestListInstances_ReturnsCorrectPositions(t *testing.T) {

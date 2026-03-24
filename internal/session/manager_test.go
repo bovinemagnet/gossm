@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,103 @@ func testOpts(name string) SessionOpts {
 		Profile:      "default",
 		Type:         TypeShell,
 	}
+}
+
+// --- defaultCommandBuilder tests ---
+
+func TestDefaultCommandBuilder_Shell(t *testing.T) {
+	opts := SessionOpts{
+		InstanceID: "i-abc123",
+		Profile:    "prod",
+		Type:       TypeShell,
+	}
+	cmd := defaultCommandBuilder(context.Background(), opts)
+
+	args := cmd.Args
+	// Should be: aws ssm start-session --target i-abc123 --profile prod
+	if args[0] != "aws" {
+		t.Errorf("args[0] = %q, want %q", args[0], "aws")
+	}
+	if !containsArg(args, "--target") || argAfter(args, "--target") != "i-abc123" {
+		t.Errorf("expected --target i-abc123 in args: %v", args)
+	}
+	if !containsArg(args, "--profile") || argAfter(args, "--profile") != "prod" {
+		t.Errorf("expected --profile prod in args: %v", args)
+	}
+	// Should NOT contain port forwarding args.
+	if containsArg(args, "--document-name") {
+		t.Errorf("shell session should not have --document-name in args: %v", args)
+	}
+	if containsArg(args, "--parameters") {
+		t.Errorf("shell session should not have --parameters in args: %v", args)
+	}
+}
+
+func TestDefaultCommandBuilder_ShellNoProfile(t *testing.T) {
+	opts := SessionOpts{
+		InstanceID: "i-abc123",
+		Type:       TypeShell,
+	}
+	cmd := defaultCommandBuilder(context.Background(), opts)
+
+	if containsArg(cmd.Args, "--profile") {
+		t.Errorf("empty profile should not produce --profile flag: %v", cmd.Args)
+	}
+}
+
+func TestDefaultCommandBuilder_PortForward(t *testing.T) {
+	opts := SessionOpts{
+		InstanceID: "i-db999",
+		Profile:    "staging",
+		Type:       TypePortForward,
+		LocalPort:  5432,
+		RemotePort: 5432,
+		RemoteHost: "db.internal",
+	}
+	cmd := defaultCommandBuilder(context.Background(), opts)
+
+	args := cmd.Args
+	if !containsArg(args, "--document-name") {
+		t.Fatalf("expected --document-name in args: %v", args)
+	}
+	docName := argAfter(args, "--document-name")
+	if docName != "AWS-StartPortForwardingSessionToRemoteHost" {
+		t.Errorf("document name = %q, want %q", docName, "AWS-StartPortForwardingSessionToRemoteHost")
+	}
+
+	if !containsArg(args, "--parameters") {
+		t.Fatalf("expected --parameters in args: %v", args)
+	}
+	params := argAfter(args, "--parameters")
+	if !strings.Contains(params, `"portNumber":["5432"]`) {
+		t.Errorf("parameters missing portNumber: %s", params)
+	}
+	if !strings.Contains(params, `"localPortNumber":["5432"]`) {
+		t.Errorf("parameters missing localPortNumber: %s", params)
+	}
+	if !strings.Contains(params, `"host":["db.internal"]`) {
+		t.Errorf("parameters missing host: %s", params)
+	}
+}
+
+// containsArg checks if an argument exists in the args slice.
+func containsArg(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// argAfter returns the argument immediately following the given flag.
+func argAfter(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func TestNewSessionManager(t *testing.T) {

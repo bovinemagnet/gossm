@@ -1,15 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
+	awsConfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 
+	awsutil "github.com/bovinemagnet/gossm/internal/aws"
 	goconfig "github.com/bovinemagnet/gossm/internal/config"
 	"github.com/bovinemagnet/gossm/internal/daemon"
 	"github.com/bovinemagnet/gossm/internal/web"
@@ -74,8 +78,15 @@ func runDaemonStart(cmd *cobra.Command, args []string) {
 		log.Fatal().Err(err).Msg("failed to start daemon")
 	}
 
-	// Set up web server.
-	srv := web.NewServer(d.SessionManager(), cfg, d.StartedAt())
+	// Set up web server with EC2 client factory for instance picker.
+	ec2Factory := func(ctx context.Context, profile string) (awsutil.EC2DescribeInstancesAPI, error) {
+		awsCfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithSharedConfigProfile(profile))
+		if err != nil {
+			return nil, err
+		}
+		return ec2.NewFromConfig(awsCfg), nil
+	}
+	srv := web.NewServer(d.SessionManager(), cfg, d.StartedAt(), ec2Factory)
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.DashboardPort),
 		Handler: srv.Handler(),

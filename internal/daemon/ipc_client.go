@@ -45,15 +45,30 @@ func IPCSend(cfg *config.Config, req IPCRequest) (*IPCResponse, error) {
 	return &resp, nil
 }
 
+// RegisterOpts carries the parameters for daemon session registration.
+type RegisterOpts struct {
+	InstanceID   string
+	InstanceName string
+	Profile      string
+	PID          int
+	SessionType  string
+	LocalPort    int
+	RemotePort   int
+	RemoteHost   string
+}
+
 // RegisterWithDaemon sends a "register" action to the running daemon,
 // informing it of an externally started session.
-func RegisterWithDaemon(cfg *config.Config, instanceID, instanceName, profile string, pid int, sessionType string) error {
+func RegisterWithDaemon(cfg *config.Config, opts RegisterOpts) error {
 	data, err := json.Marshal(map[string]any{
-		"instance_id":   instanceID,
-		"instance_name": instanceName,
-		"profile":       profile,
-		"pid":           pid,
-		"type":          sessionType,
+		"instance_id":   opts.InstanceID,
+		"instance_name": opts.InstanceName,
+		"profile":       opts.Profile,
+		"pid":           opts.PID,
+		"type":          opts.SessionType,
+		"local_port":    opts.LocalPort,
+		"remote_port":   opts.RemotePort,
+		"remote_host":   opts.RemoteHost,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal register data: %w", err)

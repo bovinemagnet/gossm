@@ -167,10 +167,69 @@ func PromptUser(scanner *bufio.Scanner, max int) (int, error) {
 	return num, nil
 }
 
+// InstanceInfo holds structured EC2 instance data for the web dashboard.
+type InstanceInfo struct {
+	InstanceID   string
+	InstanceName string
+	State        string
+	InstanceType string
+	PrivateIP    string
+	AZ           string
+}
+
+// ExtractInstances parses DescribeInstancesOutput into a slice of InstanceInfo.
+func ExtractInstances(output *ec2.DescribeInstancesOutput) []InstanceInfo {
+	if output == nil {
+		return nil
+	}
+	var instances []InstanceInfo
+	for _, r := range output.Reservations {
+		for _, inst := range r.Instances {
+			info := InstanceInfo{
+				InstanceID:   SafeString(inst.InstanceId, "N/A"),
+				InstanceName: GetValue("name", inst.Tags),
+				State:        string(inst.State.Name),
+				InstanceType: string(inst.InstanceType),
+				PrivateIP:    SafeString(inst.PrivateIpAddress, ""),
+			}
+			if inst.Placement != nil {
+				info.AZ = SafeString(inst.Placement.AvailabilityZone, "")
+			}
+			instances = append(instances, info)
+		}
+	}
+	return instances
+}
+
+// LaunchOpts carries the parameters for launching an SSM session from the CLI.
+type LaunchOpts struct {
+	Profile    string
+	InstanceID string
+	Type       string // "shell" or "port-forward"
+	LocalPort  int
+	RemotePort int
+	RemoteHost string
+}
+
 // LaunchSession executes the aws ssm start-session command for the given instance.
-func LaunchSession(profile, instanceID string) error {
-	fmt.Printf("running command:> aws --profile %s ssm start-session --target %s\n", profile, instanceID)
-	cmd := exec.Command("aws", "--profile", profile, "ssm", "start-session", "--target", instanceID)
+// It supports both shell and port-forward session types.
+func LaunchSession(opts LaunchOpts) error {
+	args := []string{"--profile", opts.Profile, "ssm", "start-session", "--target", opts.InstanceID}
+
+	if opts.Type == "port-forward" {
+		args = append(args, "--document-name", "AWS-StartPortForwardingSessionToRemoteHost")
+		host := opts.RemoteHost
+		if host == "" {
+			host = "localhost"
+		}
+		args = append(args, "--parameters", fmt.Sprintf(
+			`{"portNumber":["%d"],"localPortNumber":["%d"],"host":["%s"]}`,
+			opts.RemotePort, opts.LocalPort, host,
+		))
+	}
+
+	fmt.Printf("running command:> aws %s\n", strings.Join(args, " "))
+	cmd := exec.Command("aws", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
