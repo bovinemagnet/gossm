@@ -1,0 +1,80 @@
+= gossm Overview
+Paul Snow
+0.0.0
+:description: An overview of the gossm CLI tool and daemon for managing AWS SSM sessions.
+
+gossm is a CLI tool and daemon for managing AWS Systems Manager (SSM) sessions on EC2 instances.
+Written in Go, it utilises `~/.aws/config` to discover and connect to instances via
+https://docs.aws.amazon.com/systems-manager/index.html[AWS Systems Manager], removing the need
+for SSH keys, open inbound ports, or a bastion host.
+
+== Key Features
+
+EC2 Instance Discovery::
+gossm queries your AWS account for running EC2 instances and presents an interactive numbered
+list, optionally filtered by tag values.
+
+Shell Access::
+Launch a fully interactive shell session on any SSM-managed instance with a single command.
+
+Port Forwarding::
+Create encrypted tunnels through SSM to reach databases and internal services without exposing
+them to the public internet.
+
+Background Daemon::
+Run gossm as a background daemon to keep long-lived tunnels alive and manage multiple concurrent
+sessions from a single process.
+
+HTMX Web Dashboard::
+A lightweight browser-based dashboard, served by the daemon, lets you monitor active sessions,
+view uptime and activity, and launch new connections without leaving the browser.
+
+Session Presets::
+Define named session configurations in your config file. Presets appear on the dashboard for
+one-click launch of frequently used connections.
+
+Automatic Session Registration::
+Sessions started via `gossm connect` on the command line automatically register with a running
+daemon and appear on the dashboard.
+
+== Dashboard Preview
+
+image::dashboard-full.png[gossm web dashboard showing active sessions and controls,width=800]
+
+See xref:daemon.adoc#dashboard[Daemon & Dashboard] for full details.
+
+== How It Works
+
+gossm wraps the AWS CLI `ssm start-session` command.
+When you select an instance, gossm constructs and executes:
+
+[source,bash]
+----
+aws --profile <profile> ssm start-session --target <instance-id>
+----
+
+For port forwarding, gossm passes the additional `--document-name` and `--parameters` arguments
+required by the SSM port-forwarding document.
+
+All session lifecycle events are tracked by the daemon's session manager, which uses
+Server-Sent Events (SSE) to push live updates to the dashboard.
+
+== Prerequisites
+
+Before using gossm you must have the following installed and configured:
+
+* https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html[AWS CLI]
+* https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html[AWS Session Manager Plugin]
+* AWS credentials configured in `~/.aws/config` and `~/.aws/credentials`
+
+See xref:installation.adoc[] for platform-specific installation instructions.
+
+NOTE: Your EC2 instances must have the SSM Agent installed and an IAM role that permits Systems
+Manager access. gossm does not manage instance-side configuration.
+
+== Next Steps
+
+* xref:installation.adoc[Install gossm] on your machine.
+* xref:getting-started.adoc[Get started] with your first connection.
+* xref:configuration.adoc[Configure gossm] to suit your environment.
+* xref:daemon.adoc[Run the daemon] for persistent session management and the web dashboard.

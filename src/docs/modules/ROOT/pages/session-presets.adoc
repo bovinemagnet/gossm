@@ -178,6 +178,9 @@ gossm daemon start
 
 Then open the dashboard at `http://localhost:8877` (or your configured `GOSSM_PORT`).
 Each preset appears as a named button. Click a preset button to launch the session immediately.
+
+image::dashboard-presets.png[Session presets on the dashboard,width=800]
+
 The new session appears in the active session list and receives live updates via SSE.
 
 WARNING: If the daemon is not running, preset buttons are not available. You can still use

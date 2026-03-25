@@ -103,6 +103,16 @@ the SSM session cleanly.
 
 === Dashboard Screenshot
 
+image::dashboard-full.png[gossm web dashboard,width=800]
+
+The stats bar shows active session count, daemon uptime, and a session history sparkline:
+
+image::dashboard-stats.png[Dashboard statistics bar,width=800]
+
+The sessions table lists all active connections with live status updates:
+
+image::dashboard-sessions.png[Active sessions table,width=800]
+
 NOTE: The dashboard is served at `http://localhost:8877` by default. If you have changed
 `GOSSM_PORT`, substitute that port number in the URL.
 
