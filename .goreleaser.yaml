@@ -81,21 +81,17 @@ changelog:
     - title: Others
       order: 999
 
-# Homebrew tap configuration
-brews:
+# Homebrew cask configuration (replaces deprecated 'brews')
+homebrew_casks:
   - name: gossm
     repository:
       owner: bovinemagnet
       name: homebrew-tap
       branch: main
-    directory: Formula
+    directory: Casks
     homepage: "https://github.com/bovinemagnet/gossm"
     description: "Tool to connect to aws resources."
     license: "MIT"
-    test: |
-      system "#{bin}/graphqls-to-asciidoc -version"
-    install: |
-      bin.install "graphqls-to-asciidoc"
 
 release:
   github:
