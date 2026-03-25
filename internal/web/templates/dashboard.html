@@ -5,7 +5,7 @@
     </div>
 
     <!-- Session table -->
-    <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
+    <div id="sessions-section" class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
         <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
             <h2 class="text-lg font-semibold text-slate-200">Sessions</h2>
             <button
@@ -39,7 +39,7 @@
 
     {{if .Presets}}
     <!-- Saved session presets -->
-    <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
+    <div id="presets-section" class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
         <div class="px-6 py-4 border-b border-slate-700">
             <h2 class="text-lg font-semibold text-slate-200">Saved Sessions</h2>
         </div>
@@ -75,7 +75,7 @@
         <div class="px-6 py-4 border-b border-slate-700">
             <h2 class="text-lg font-semibold text-slate-200">Start New Session</h2>
         </div>
-        <form hx-post="/api/sessions"
+        <form id="new-session-form" hx-post="/api/sessions"
               hx-target="#session-table-body"
               hx-swap="innerHTML"
               class="px-6 py-4">
