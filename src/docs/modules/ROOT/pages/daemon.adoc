@@ -1,0 +1,165 @@
+= Daemon & Dashboard
+Paul Snow
+0.0.0
+:description: How to run the gossm daemon and use the HTMX web dashboard to manage multiple concurrent SSM sessions.
+
+The gossm daemon is a long-running background process that manages multiple concurrent SSM
+sessions and serves a lightweight HTMX web dashboard for real-time monitoring and control.
+
+Running the daemon is optional — `gossm connect` works perfectly without it — but the daemon
+unlocks persistent sessions, the web dashboard, and xref:session-presets.adoc[session presets].
+
+== Daemon Commands
+
+=== Start
+
+[source,bash]
+----
+gossm daemon start
+----
+
+Forks a daemon process to the background, writes a PID file to `~/.gossm/gossm.pid`, and opens
+a Unix socket at `~/.gossm/gossm.sock` for IPC. The command returns immediately after the daemon
+is confirmed running.
+
+==== Foreground Mode
+
+[source,bash]
+----
+gossm daemon start --foreground
+----
+
+Runs the daemon in the foreground without forking. Useful for debugging, running inside a Docker
+container, or when you want to see log output directly in the terminal. Press Ctrl-C to stop.
+
+=== Status
+
+[source,bash]
+----
+gossm daemon status
+----
+
+Reports whether the daemon is running, along with its PID and the number of active sessions.
+Exits with a non-zero code if the daemon is not running, making it suitable for use in scripts
+and health checks.
+
+=== Stop
+
+[source,bash]
+----
+gossm daemon stop
+----
+
+Sends a graceful shutdown signal to the running daemon. The daemon finishes any in-flight
+requests, closes active sessions cleanly, removes the PID file and socket, then exits.
+
+WARNING: Force-killing the daemon process (e.g. `kill -9`) skips graceful shutdown and may leave
+sessions in an unknown state. Always prefer `gossm daemon stop`.
+
+== PID File and Socket Location
+
+By default, gossm stores the PID file and Unix socket in `~/.gossm/`.
+This directory is created automatically on first run.
+
+The location can be changed with the `GOSSM_PID_DIR` environment variable or the corresponding
+entry in `~/.gossm/config`. See xref:configuration.adoc[] for details.
+
+[[dashboard]]
+== Web Dashboard
+
+Once the daemon is running, open a browser at:
+
+----
+http://localhost:8877
+----
+
+The port is configurable via `GOSSM_PORT`. See xref:configuration.adoc[].
+
+=== Dashboard Features
+
+Session List::
+All active sessions are listed with their instance ID, profile, session type (shell or
+port-forward), start time, and uptime.
+
+Live Updates::
+The dashboard uses Server-Sent Events (SSE) to receive real-time updates from the daemon.
+Session starts, stops, and status changes appear immediately without a page refresh.
+
+Activity Sparklines::
+Each session row includes a small sparkline chart showing recent activity, making it easy to
+identify idle tunnels or unusually busy connections.
+
+New Session Launch::
+A form on the dashboard allows you to start a new connection by selecting a profile and entering
+an instance ID, without leaving the browser.
+
+Preset Quick-Launch::
+xref:session-presets.adoc[Session presets] defined in your config file appear as buttons on the
+dashboard. Click a preset to launch the corresponding session immediately.
+
+Stop Session::
+Each session row has a stop button. Clicking it sends a stop request to the daemon, which closes
+the SSM session cleanly.
+
+=== Dashboard Screenshot
+
+NOTE: The dashboard is served at `http://localhost:8877` by default. If you have changed
+`GOSSM_PORT`, substitute that port number in the URL.
+
+== CLI Session Registration
+
+Sessions started with `gossm connect` from the command line automatically register with a running
+daemon via the Unix socket. This means:
+
+* You can start sessions from multiple terminal windows and monitor them all from a single
+  dashboard view.
+* Sessions persist beyond the terminal that launched them, because the daemon holds the
+  underlying process.
+* You can stop any CLI-started session from the dashboard, even if the originating terminal has
+  been closed.
+
+TIP: The recommended workflow for long-lived port-forwarding tunnels is to start the daemon once
+at the beginning of your work session, then use `gossm connect` as normal. The daemon keeps
+the tunnels alive even if you close your terminal emulator.
+
+== Logging
+
+When running in the foreground, the daemon writes structured JSON logs to stdout.
+Set `GOSSM_LOG_LEVEL=debug` or pass `--logging debug` to increase verbosity.
+
+In background mode, redirect output when launching if you need a persistent log:
+
+[source,bash]
+----
+gossm daemon start --foreground >> ~/.gossm/daemon.log 2>&1 &
+----
+
+== Autostart on Login
+
+To start the gossm daemon automatically when you log in, add a start command to your shell
+profile or create a systemd user service.
+
+.Example systemd user service (~/.config/systemd/user/gossm.service)
+[source,ini]
+----
+[Unit]
+Description=gossm daemon
+
+[Service]
+ExecStart=/usr/local/bin/gossm daemon start --foreground
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+----
+
+[source,bash]
+----
+systemctl --user enable --now gossm.service
+----
+
+== Related Pages
+
+* xref:session-presets.adoc[]
+* xref:configuration.adoc[]
+* xref:connect.adoc[]

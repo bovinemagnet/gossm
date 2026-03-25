@@ -36,7 +36,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
-		DashboardPort: 8443,
+		DashboardPort: 8877,
 		LogLevel:      "warn",
 		PIDDir:        filepath.Join(home, ".gossm"),
 	}

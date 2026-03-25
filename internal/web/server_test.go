@@ -23,7 +23,7 @@ func testServer(t *testing.T) *Server {
 	t.Helper()
 	sm := session.New(nil)
 	cfg := &config.Config{
-		DashboardPort: 8443,
+		DashboardPort: 8877,
 		LogLevel:      "warn",
 		PIDDir:        t.TempDir(),
 	}
@@ -36,7 +36,7 @@ func testServerWithPresets(t *testing.T) *Server {
 	t.Helper()
 	sm := session.New(nil)
 	cfg := &config.Config{
-		DashboardPort: 8443,
+		DashboardPort: 8877,
 		LogLevel:      "warn",
 		PIDDir:        t.TempDir(),
 		Presets: []config.SessionPreset{
@@ -362,7 +362,7 @@ func testServerWithEC2(t *testing.T, factory EC2ClientFactory) *Server {
 	t.Helper()
 	sm := session.New(nil)
 	cfg := &config.Config{
-		DashboardPort: 8443,
+		DashboardPort: 8877,
 		LogLevel:      "warn",
 		PIDDir:        t.TempDir(),
 	}

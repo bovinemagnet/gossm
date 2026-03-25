@@ -10,8 +10,8 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.DashboardPort != 8443 {
-		t.Errorf("DashboardPort = %d, want 8443", cfg.DashboardPort)
+	if cfg.DashboardPort != 8877 {
+		t.Errorf("DashboardPort = %d, want 8877", cfg.DashboardPort)
 	}
 	if cfg.LogLevel != "warn" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "warn")

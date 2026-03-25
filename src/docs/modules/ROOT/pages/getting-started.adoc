@@ -1,0 +1,119 @@
+= Getting Started
+Paul Snow
+0.0.0
+:description: A quick-start guide to connecting to your first EC2 instance with gossm.
+
+This guide walks you through making your first connection with gossm. By the end you will have
+an interactive shell session open on an EC2 instance via AWS Systems Manager.
+
+== Before You Begin
+
+Ensure you have completed all steps in xref:installation.adoc[]:
+
+* gossm binary is on your `PATH`
+* AWS CLI is installed
+* AWS Session Manager Plugin is installed
+* AWS credentials are configured in `~/.aws/config` and `~/.aws/credentials`
+
+Your target EC2 instance must have the SSM Agent running and an IAM instance profile that grants
+Systems Manager access.
+
+== Your First Connection
+
+=== Step 1 — Run gossm connect
+
+[source,bash]
+----
+gossm connect
+----
+
+If the `AWS_PROFILE` environment variable is not set, gossm reads all named profiles from
+`~/.aws/config` and presents an interactive picker:
+
+[source,shell]
+----
+[1]   default
+[2]   production
+[3]   staging
+Select profile:> 2
+----
+
+=== Step 2 — Select an Instance
+
+After the profile is chosen, gossm queries EC2 for running instances in that account and
+displays a numbered list:
+
+[source,shell]
+----
+[1]   i-0aaa111bbb222ccc3   web-server-01.example.com
+[2]   i-0ddd444eee555fff6   api-server-01.example.com
+[3]   i-0ggg777hhh888iii9   db-proxy-01.example.com
+Launch number:> 1
+----
+
+Each entry shows the instance ID followed by the Name tag (or hostname if no Name tag is set).
+Enter the number corresponding to the instance you want to connect to and press Enter.
+
+=== Step 3 — Shell Session Opens
+
+gossm executes the following command automatically:
+
+[source,bash]
+----
+aws --profile production ssm start-session --target i-0aaa111bbb222ccc3
+----
+
+You are now inside an interactive shell on the remote instance.
+
+IMPORTANT: Pressing *Ctrl-Z* suspends the `gossm` process on your local machine, not the remote
+shell. To exit the remote session cleanly, type `exit` at the remote prompt.
+
+== Shortcut: Specify the Profile Up Front
+
+If you already know which profile to use, pass it with `-p` to skip the profile picker:
+
+[source,bash]
+----
+gossm connect -p production
+----
+
+== Shortcut: Connect Directly to a Known Instance
+
+If you know the instance ID, bypass both pickers entirely:
+
+[source,bash]
+----
+gossm connect -p production -t i-0aaa111bbb222ccc3
+----
+
+== Filtering Instances by Tag Value
+
+Pass one or more strings as positional arguments and gossm will filter the instance list to only
+those whose tag values contain any of the given strings:
+
+[source,bash]
+----
+# Show only instances whose tags contain "prd" or "web"
+gossm connect prd web
+----
+
+[source,bash]
+----
+# Combined with an explicit profile
+gossm connect -p production prd web
+----
+
+TIP: Tag filtering is case-insensitive and matches partial values, making it easy to narrow down
+large instance lists without remembering exact names.
+
+== What Happens When the Daemon Is Running
+
+If you have started `gossm daemon start`, any session launched via `gossm connect` automatically
+registers with the daemon over a Unix socket. The session then appears on the
+xref:daemon.adoc#dashboard[web dashboard] at `http://localhost:8877`.
+
+== Next Steps
+
+* Learn all available flags in xref:connect.adoc[Connecting to Instances].
+* Set up xref:port-forwarding.adoc[Port Forwarding] to reach internal services.
+* Explore the xref:daemon.adoc[Daemon & Dashboard] for managing multiple sessions.

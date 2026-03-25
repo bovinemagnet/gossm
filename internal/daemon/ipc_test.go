@@ -16,7 +16,7 @@ func testConfig(t *testing.T) *config.Config {
 	t.Helper()
 	dir := t.TempDir()
 	return &config.Config{
-		DashboardPort: 8443,
+		DashboardPort: 8877,
 		LogLevel:      "warn",
 		PIDDir:        dir,
 	}
@@ -71,8 +71,8 @@ func TestIPCRoundTrip(t *testing.T) {
 	if status.SessionCount != 0 {
 		t.Errorf("SessionCount = %d, want 0", status.SessionCount)
 	}
-	if status.Port != 8443 {
-		t.Errorf("Port = %d, want 8443", status.Port)
+	if status.Port != 8877 {
+		t.Errorf("Port = %d, want 8877", status.Port)
 	}
 }
 
@@ -246,7 +246,7 @@ func TestIPCRegisterPortForward(t *testing.T) {
 
 func TestIPCConnectNotRunning(t *testing.T) {
 	cfg := &config.Config{
-		DashboardPort: 8443,
+		DashboardPort: 8877,
 		LogLevel:      "warn",
 		PIDDir:        filepath.Join(t.TempDir(), "nonexistent"),
 	}

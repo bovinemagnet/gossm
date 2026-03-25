@@ -1,0 +1,191 @@
+= Session Presets
+Paul Snow
+0.0.0
+:description: How to define and use named session presets for quick-launch connections from the gossm dashboard.
+
+Session presets are named session configurations stored in your gossm config file. They appear
+on the xref:daemon.adoc#dashboard[web dashboard] as buttons, allowing you to start frequently
+used connections with a single click — without typing flags on the command line each time.
+
+Presets are particularly useful for:
+
+* Port-forwarding tunnels to databases or internal services you access daily
+* Jump shells into production or staging environments
+* Shared team configurations committed to a project `.env` file
+
+== Configuration Format
+
+Presets are defined as environment-style variables, numbered sequentially starting from `1`.
+Each preset is a group of variables sharing the same numeric index.
+
+.Example: ~/.gossm/config
+[source,shell]
+----
+GOSSM_SESSION_1_NAME=Production DB Tunnel
+GOSSM_SESSION_1_INSTANCE_ID=i-0123456789abcdef0
+GOSSM_SESSION_1_PROFILE=production
+GOSSM_SESSION_1_TYPE=port-forward
+GOSSM_SESSION_1_LOCAL_PORT=5432
+GOSSM_SESSION_1_REMOTE_PORT=5432
+GOSSM_SESSION_1_REMOTE_HOST=db.internal.example.com
+
+GOSSM_SESSION_2_NAME=Staging Shell
+GOSSM_SESSION_2_INSTANCE_ID=i-abcdef0123456789a
+GOSSM_SESSION_2_PROFILE=staging
+GOSSM_SESSION_2_TYPE=shell
+----
+
+NOTE: Blank lines between preset groups are ignored. The numbering must be contiguous starting
+from `1`. gossm stops reading presets as soon as a number in the sequence is missing.
+
+== Preset Fields
+
+[cols="2,1,4"]
+|===
+|Variable Suffix |Required |Description
+
+|`_NAME`
+|Yes
+|Human-readable label shown on the dashboard button and in the session list.
+
+|`_INSTANCE_ID`
+|Yes
+|The EC2 instance ID to connect to (e.g. `i-0123456789abcdef0`).
+
+|`_PROFILE`
+|Yes
+|AWS profile name from `~/.aws/config` to use for this session.
+
+|`_TYPE`
+|Yes
+|Session type. Must be either `shell` or `port-forward`.
+
+|`_LOCAL_PORT`
+|For port-forward
+|Local port to listen on. Required when `_TYPE=port-forward`.
+
+|`_REMOTE_PORT`
+|For port-forward
+|Remote port to connect to. Required when `_TYPE=port-forward`.
+
+|`_REMOTE_HOST`
+|No
+|Remote host for port forwarding. Defaults to `localhost` (the instance itself).
+|===
+
+== Examples
+
+=== Shell Preset
+
+A shell preset opens an interactive shell session on the target instance:
+
+[source,shell]
+----
+GOSSM_SESSION_1_NAME=Production Web Server
+GOSSM_SESSION_1_INSTANCE_ID=i-0aaa111bbb222ccc3
+GOSSM_SESSION_1_PROFILE=production
+GOSSM_SESSION_1_TYPE=shell
+----
+
+=== Port-Forward Preset — Service on the Instance
+
+Use this when the service runs directly on the EC2 instance:
+
+[source,shell]
+----
+GOSSM_SESSION_2_NAME=Local Prometheus
+GOSSM_SESSION_2_INSTANCE_ID=i-0aaa111bbb222ccc3
+GOSSM_SESSION_2_PROFILE=production
+GOSSM_SESSION_2_TYPE=port-forward
+GOSSM_SESSION_2_LOCAL_PORT=9090
+GOSSM_SESSION_2_REMOTE_PORT=9090
+----
+
+=== Port-Forward Preset — RDS Database
+
+Use `_REMOTE_HOST` when the target is an internal service reachable from the VPC:
+
+[source,shell]
+----
+GOSSM_SESSION_3_NAME=Production RDS (PostgreSQL)
+GOSSM_SESSION_3_INSTANCE_ID=i-0aaa111bbb222ccc3
+GOSSM_SESSION_3_PROFILE=production
+GOSSM_SESSION_3_TYPE=port-forward
+GOSSM_SESSION_3_LOCAL_PORT=5432
+GOSSM_SESSION_3_REMOTE_PORT=5432
+GOSSM_SESSION_3_REMOTE_HOST=mydb.cluster-abc123.ap-southeast-2.rds.amazonaws.com
+----
+
+=== Multiple Environments
+
+You can define presets for different environments in the same file:
+
+[source,shell]
+----
+GOSSM_SESSION_1_NAME=Production DB Tunnel
+GOSSM_SESSION_1_INSTANCE_ID=i-0123456789abcdef0
+GOSSM_SESSION_1_PROFILE=production
+GOSSM_SESSION_1_TYPE=port-forward
+GOSSM_SESSION_1_LOCAL_PORT=5432
+GOSSM_SESSION_1_REMOTE_PORT=5432
+GOSSM_SESSION_1_REMOTE_HOST=prod-db.internal.example.com
+
+GOSSM_SESSION_2_NAME=Staging DB Tunnel
+GOSSM_SESSION_2_INSTANCE_ID=i-abcdef0123456789a
+GOSSM_SESSION_2_PROFILE=staging
+GOSSM_SESSION_2_TYPE=port-forward
+GOSSM_SESSION_2_LOCAL_PORT=5433
+GOSSM_SESSION_2_REMOTE_PORT=5432
+GOSSM_SESSION_2_REMOTE_HOST=staging-db.internal.example.com
+
+GOSSM_SESSION_3_NAME=Production Shell
+GOSSM_SESSION_3_INSTANCE_ID=i-0123456789abcdef0
+GOSSM_SESSION_3_PROFILE=production
+GOSSM_SESSION_3_TYPE=shell
+----
+
+TIP: Use different local ports for presets that forward to the same remote port in different
+environments (e.g. production on `5432` and staging on `5433`). This allows both tunnels to be
+active simultaneously without a port conflict.
+
+== Where to Define Presets
+
+Presets can be placed in any of the configuration sources gossm reads. The recommended locations
+are:
+
+`~/.gossm/config`::
+Personal presets that apply to all projects. Suitable for long-lived infrastructure connections.
+
+`.env` in the project directory::
+Project-specific presets. Useful for developer teams — commit a `.env.example` with preset
+templates to the repository and let each developer fill in instance IDs for their environment.
+
+Environment variables::
+Set directly in the shell or CI environment. Less convenient for presets but possible if your
+secrets management injects environment variables.
+
+See xref:configuration.adoc[] for the full configuration precedence rules.
+
+== Using Presets from the Dashboard
+
+Presets are only available through the dashboard when the daemon is running.
+Start the daemon if it is not already active:
+
+[source,bash]
+----
+gossm daemon start
+----
+
+Then open the dashboard at `http://localhost:8877` (or your configured `GOSSM_PORT`).
+Each preset appears as a named button. Click a preset button to launch the session immediately.
+The new session appears in the active session list and receives live updates via SSE.
+
+WARNING: If the daemon is not running, preset buttons are not available. You can still use
+equivalent command-line invocations via `gossm connect` with the same flags.
+
+== Related Pages
+
+* xref:daemon.adoc[]
+* xref:configuration.adoc[]
+* xref:port-forwarding.adoc[]
+* xref:connect.adoc[]

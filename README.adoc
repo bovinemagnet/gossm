@@ -1,18 +1,40 @@
 = gossm
-A simple tool to list AWS instances by profile, and then execute the aws session-manager connect command.
 
-I needed a tool to utilise the `~/.aws/config` file to launch a session via  https://docs.aws.amazon.com/systems-manager/index.html[AWS Systems Manager]
-to an instance in the cloud.
+A CLI tool and daemon for managing AWS SSM sessions. Lists EC2 instances, launches SSM sessions (shell and port forwarding), and provides an HTMX web dashboard for monitoring and controlling multiple concurrent connections.
 
-Written in Go, this tool allows you to launch the aws cli ssm components.
+Written in Go, gossm utilises the `~/.aws/config` file to launch sessions via https://docs.aws.amazon.com/systems-manager/index.html[AWS Systems Manager].
 
-if you do not set an environment variable for the `AWS_PROFILE` it will interrogate the ones found in `~/.aws/config` and provide you a list to pick from before .
+== Simple Install
 
-Once the profile is set, it will get a list of the EC2 instances.
+To grab the latest build from GitHub:
 
-usage:
-`AWS_PROFILE=<profile_name> gossm`
+[source,bash]
+----
+go install github.com/bovinemagnet/gossm@latest
+----
 
+== Quick Start
+
+=== Connect to an Instance
+
+If you do not set an environment variable for `AWS_PROFILE`, gossm will interrogate the profiles found in `~/.aws/config` and provide you a list to pick from.
+
+[source,bash]
+----
+# Pick profile interactively, then pick instance
+gossm connect
+
+# Specify a profile
+gossm connect -p my-profile
+
+# Connect directly to a known instance
+gossm connect -p my-profile -t i-0123456789abcdef0
+
+# Filter instances by tag values
+gossm connect prd web
+----
+
+.Example output
 [source,shell]
 ----
 [1]   i-AAAAAAAAAAAAAAAAA    svr1.example.com <1>
@@ -23,20 +45,145 @@ Launch number:> 2 <2>
 <1> The list of instances to pick from.
 <2> The command prompt to enter the number representing the list above.
 
-Once you select the instance, it will launch the session via the command line application, in the following way : `aws --profile <AWS_PROFILE> ssm start-session --target <i-BBBBBBBBBBBBBBBBBB>`
+Once you select the instance, gossm launches the session via: `aws --profile <profile> ssm start-session --target <instance-id>`
 
-You can further filter the list by specifying tag values, that will eb checked.
+==== Connect Options
 
-eg `gossm prd web` will look for machines tagged with both `prd` and `web` and present you a list of instances.
+[cols="1,1,3"]
+|===
+|Flag |Short |Description
 
-NOTE: It does not check that the SSM agent is running on these instances.
+|`--profile`
+|`-p`
+|AWS profile (defaults to `$AWS_PROFILE`)
 
+|`--target`
+|`-t`
+|Connect directly to an instance ID
+
+|`--filter`
+|`-f`
+|Tag name filters (comma-separated)
+
+|`--type`
+|`-y`
+|Display instance type in the list
+
+|`--az`
+|`-z`
+|Display availability zone in the list
+
+|`--ip`
+|`-i`
+|Display private IP address in the list
+
+|`--local-port`
+|
+|Local port for port forwarding
+
+|`--remote-port`
+|
+|Remote port for port forwarding
+
+|`--remote-host`
+|
+|Remote host for port forwarding (default: localhost)
+
+|`--logging`
+|`-l`
+|Set log level (`debug`, `info`, `warn`)
+|===
+
+=== Port Forwarding
+
+gossm supports SSM port forwarding. Specify `--local-port` and `--remote-port` to create a tunnel through an SSM-managed instance:
+
+[source,bash]
+----
+# Forward local port 5432 to a remote PostgreSQL instance
+gossm connect -p my-profile -t i-0123456789abcdef0 \
+  --local-port 5432 --remote-port 5432
+
+# Forward to a different remote host via the instance
+gossm connect -p my-profile -t i-0123456789abcdef0 \
+  --local-port 3306 --remote-port 3306 --remote-host db.internal.example.com
+----
+
+=== Daemon & Dashboard
+
+gossm includes a background daemon that serves an HTMX web dashboard for monitoring and managing multiple concurrent SSM sessions.
+
+[source,bash]
+----
+# Start the daemon (forks to background)
+gossm daemon start
+
+# Start in foreground (useful for debugging)
+gossm daemon start --foreground
+
+# Check daemon status
+gossm daemon status
+
+# Stop the daemon
+gossm daemon stop
+----
+
+Once the daemon is running, the dashboard is available at `http://localhost:8877` (configurable via `GOSSM_PORT`).
+
+Sessions started via `gossm connect` automatically register with a running daemon, so they appear on the dashboard.
+
+==== Session Presets
+
+You can define saved session presets in your configuration files. These appear on the dashboard for quick launch.
+
+.Example: ~/.gossm/config
+[source,shell]
+----
+GOSSM_SESSION_1_NAME=Production DB Tunnel
+GOSSM_SESSION_1_INSTANCE_ID=i-0123456789abcdef0
+GOSSM_SESSION_1_PROFILE=production
+GOSSM_SESSION_1_TYPE=port-forward
+GOSSM_SESSION_1_LOCAL_PORT=5432
+GOSSM_SESSION_1_REMOTE_PORT=5432
+GOSSM_SESSION_1_REMOTE_HOST=db.internal.example.com
+
+GOSSM_SESSION_2_NAME=Staging Shell
+GOSSM_SESSION_2_INSTANCE_ID=i-abcdef0123456789a
+GOSSM_SESSION_2_PROFILE=staging
+GOSSM_SESSION_2_TYPE=shell
+----
+
+== Configuration
+
+Configuration is loaded from multiple sources with the following precedence (later overrides earlier):
+
+1. Compiled defaults
+2. `~/.gossm/config`
+3. `.env` in current working directory
+4. Environment variables
+
+[cols="2,3,1"]
+|===
+|Variable |Description |Default
+
+|`GOSSM_PORT`
+|Dashboard port
+|`8877`
+
+|`GOSSM_LOG_LEVEL`
+|Log level (`debug`, `info`, `warn`)
+|`warn`
+
+|`GOSSM_PID_DIR`
+|Directory for PID file and Unix socket
+|`~/.gossm`
+|===
 
 == AWS Profiles
 
-Not really in scope for this tool, but I have a list of AWS profiles in `~/.aws/config` and the connection credentials are stored in `~/.aws/credentials`
+Not really in scope for this tool, but gossm uses AWS profiles from `~/.aws/config` and connection credentials from `~/.aws/credentials`.
 
-see AWS Documentation for more information on the `~/.aws/*` files.
+See the AWS documentation for more information on the `~/.aws/*` files.
 
 .Example: ~/.aws/config
 [source,shell]
@@ -48,51 +195,47 @@ source_profile = sample-admin-account <4>
 ----
 <1> Name of the profile, used by `gossm`.
 <2> The region to use for the profile.
-<3> The role to use for the profile.  This is the role in the account you want to utilise.
-<4> The account from the  `~/.aws/credentials` you want to use.
-
+<3> The role to use for the profile. This is the role in the account you want to utilise.
+<4> The account from the `~/.aws/credentials` you want to use.
 
 .Example: ~/.aws/credentials
 [source,shell]
 ----
-[sample-admin-account]  <1>
+[sample-admin-account] <1>
 aws_access_key_id = ABCD... <2>
 aws_secret_access_key = ABCD... <3>
 ----
-<1> the name you specify for the config, also used for the connection, eg `gossm sample-admin-acount`
-<2> access key from AWS
-<3> the secre from AWS
+<1> The name you specify for the config, also used for the connection, e.g. `gossm connect -p sample-admin-account`
+<2> Access key from AWS
+<3> The secret from AWS
 
-== Simple Install
+== Prerequisites
 
-To grab the latest build from github, run the following command.
+gossm requires the following installed on the host machine:
 
-`go install github.com/bovinemagnet/gossm@latest` 
+* https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html[AWS CLI]
+* https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html[AWS SSM Plugin]
 
-This will install the latest built version.
-
-IMPORTANT: Pressing ctrl-Z will suspend the gossm process not the process on the remote 
-
-
-== AWS CLI and SSM
-
-Remember to install https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html[AWS CLI] and https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html[AWS SSM] before using this tool. 
-
-On arch linux, I ran the following:
-
-=== ArchLinux
+=== Arch Linux
 
 .Install AWS CLI
-[source, bash]
+[source,bash]
 ----
 sudo pacman -S aws-cli-v2
 ----
 
 .Install AWS SSM Plugin
+[source,bash]
 ----
 git clone https://aur.archlinux.org/aws-session-manager-plugin.git
 cd aws-session-manager-plugin
 makepkg -sri
 ----
 
-NOTE: Check the steps, to ensure they match your environemnt.
+NOTE: Check the steps to ensure they match your environment.
+
+== Release
+
+gossm uses https://goreleaser.com[GoReleaser] for cross-platform builds (Linux, macOS, Windows on amd64 and arm64). Version is set via ldflags at build time.
+
+IMPORTANT: Pressing Ctrl-Z will suspend the gossm process, not the process on the remote machine.
