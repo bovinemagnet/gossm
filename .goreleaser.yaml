@@ -6,13 +6,12 @@ before:
     - go generate ./...
 
 builds:
-  # - id: gossm
-  #   binary: "{{ .ProjectName }}{{ .Amd64 }}"
-  - env:
+  - id: default
+    env:
       - CGO_ENABLED=0
-    mod_timestamp: "{{ .CommitTimestamp }}" # Ensures reproducible builds
+    mod_timestamp: "{{ .CommitTimestamp }}"
     flags:
-      - -trimpath # Removes local file paths from the binary
+      - -trimpath
     goos:
       - linux
       - windows
@@ -20,7 +19,6 @@ builds:
     goarch:
       - amd64
       - arm64
-    # This tells GoReleaser to build all four microarchitecture levels
     goamd64:
       - v1
       - v2
@@ -32,17 +30,55 @@ builds:
       - -X github.com/bovinemagnet/gossm/cmd.Version={{.Version}}
       - -X github.com/bovinemagnet/gossm/cmd.Commit={{.Commit}}
       - -X github.com/bovinemagnet/gossm/cmd.Date={{.Date}}
+  - id: homebrew
+    env:
+      - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    goamd64:
+      - v1
+    main: .
+    ldflags:
+      - -s -w
+      - -X github.com/bovinemagnet/gossm/cmd.Version={{.Version}}
+      - -X github.com/bovinemagnet/gossm/cmd.Commit={{.Commit}}
+      - -X github.com/bovinemagnet/gossm/cmd.Date={{.Date}}
 
 archives:
-  - formats:
+  - id: default
+    ids:
+      - default
+    formats:
       - tar.gz
-      - zip:windows
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64{{ .Amd64 }}
       {{- else }}{{ .Arch }}{{ end }}
+  - id: homebrew
+    ids:
+      - homebrew
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- "_homebrew" }}
 
 checksum:
   name_template: "checksums.txt"
@@ -84,6 +120,8 @@ changelog:
 # Homebrew cask configuration (replaces deprecated 'brews')
 homebrew_casks:
   - name: gossm
+    ids:
+      - homebrew
     repository:
       owner: bovinemagnet
       name: homebrew-tap

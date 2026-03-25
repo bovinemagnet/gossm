@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -96,7 +94,7 @@ func runDaemonStart(cmd *cobra.Command, args []string) {
 
 	// Handle shutdown signals.
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	notifyShutdownSignals(sigCh)
 
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -133,8 +131,8 @@ func runDaemonStop(cmd *cobra.Command, args []string) {
 			fmt.Println("Cannot find daemon process:", findErr)
 			os.Exit(1)
 		}
-		proc.Signal(syscall.SIGTERM)
-		fmt.Println("Sent SIGTERM to daemon.")
+		signalTerminate(proc)
+		fmt.Println("Sent termination signal to daemon.")
 		return
 	}
 

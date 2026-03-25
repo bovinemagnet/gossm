@@ -4,10 +4,8 @@ package daemon
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/bovinemagnet/gossm/internal/config"
@@ -24,22 +22,13 @@ type Daemon struct {
 }
 
 // IsRunning checks whether a daemon process is already alive by reading the
-// PID file and sending signal 0. Returns (alive, pid).
+// PID file and probing the process. Returns (alive, pid).
 func IsRunning(cfg *config.Config) (bool, int) {
 	pid, err := ReadPID(cfg)
 	if err != nil {
 		return false, 0
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false, pid
-	}
-	// On Unix, signal 0 checks whether the process exists.
-	err = proc.Signal(syscall.Signal(0))
-	if err != nil {
-		return false, pid
-	}
-	return true, pid
+	return isProcessAlive(pid), pid
 }
 
 // WritePID writes the current process ID to the PID file.
@@ -157,16 +146,3 @@ func (d *Daemon) StartedAt() time.Time {
 	return d.startedAt
 }
 
-// ForkDaemon re-executes the current binary with "daemon start --foreground"
-// detached from the current terminal.
-func ForkDaemon(executable string, cfg *config.Config) error {
-	cmd := exec.Command(executable, "daemon", "start", "--foreground")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Stdin = nil
-	// Start the process detached.
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
-	return cmd.Start()
-}
