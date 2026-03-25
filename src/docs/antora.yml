@@ -1,0 +1,5 @@
+name: gossm
+version: '0.0.0'
+title: gossm
+nav:
+  - modules/ROOT/nav.adoc

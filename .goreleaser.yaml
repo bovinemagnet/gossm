@@ -1,14 +1,18 @@
-# This is an example .goreleaser.yml file with some sensible defaults.
-# Make sure to check the documentation at https://goreleaser.com
+version: 2
+
 before:
   hooks:
-    # You may remove this if you don't use go modules.
     - go mod tidy
-    # you may remove this if you don't need go generate
     - go generate ./...
+
 builds:
+  # - id: gossm
+  #   binary: "{{ .ProjectName }}{{ .Amd64 }}"
   - env:
       - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}" # Ensures reproducible builds
+    flags:
+      - -trimpath # Removes local file paths from the binary
     goos:
       - linux
       - windows
@@ -16,29 +20,87 @@ builds:
     goarch:
       - amd64
       - arm64
-    ignore:
-      - goos: darwin
-        goarch: 386
-      - goos: linux
-        goarch: 386
+    # This tells GoReleaser to build all four microarchitecture levels
+    goamd64:
+      - v1
+      - v2
+      - v3
+      - v4
     main: .
     ldflags:
-      - -s -w -X github.com/bovinemagnet/gossm/cmd.Version={{.Version}}
+      - -s -w
+      - -X github.com/bovinemagnet/gossm/cmd.Version={{.Version}}
+      - -X github.com/bovinemagnet/gossm/cmd.Commit={{.Commit}}
+      - -X github.com/bovinemagnet/gossm/cmd.Date={{.Date}}
+
 archives:
-  - replacements:
-      darwin: Darwin
-      linux: Linux
-      windows: Windows
-      386: i386
-      amd64: x86_64
+  - formats:
+      - tar.gz
+      - zip:windows
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64{{ .Amd64 }}
+      {{- else }}{{ .Arch }}{{ end }}
+
 checksum:
-  name_template: 'checksums.txt'
+  name_template: "checksums.txt"
+
 snapshot:
-  #name_template: "{{ incpatch .Version }}-next"
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
+
+# changelog:
+#   sort: asc
+#   filters:
+#     exclude:
+#       - "^docs:"
+#       - "^test:"
+sboms:
+  - artifacts: archive
+
 changelog:
-  sort: asc
+  sort: desc
+  use: github
   filters:
     exclude:
-      - '^docs:'
-      - '^test:'
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: "Bug fixes"
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: "Enhancements"
+      regexp: "^.*enhance[(\\w)]*:+.*$"
+      order: 2
+    - title: Others
+      order: 999
+
+# Homebrew tap configuration
+brews:
+  - name: gossm
+    repository:
+      owner: bovinemagnet
+      name: homebrew-tap
+      branch: main
+    directory: Formula
+    homepage: "https://github.com/bovinemagnet/gossm"
+    description: "Tool to connect to aws resources."
+    license: "MIT"
+    test: |
+      system "#{bin}/graphqls-to-asciidoc -version"
+    install: |
+      bin.install "graphqls-to-asciidoc"
+
+release:
+  github:
+    owner: bovinemagnet
+    name: gossm
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"

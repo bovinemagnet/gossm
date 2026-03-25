@@ -1,0 +1,195 @@
+= Connecting to Instances
+Paul Snow
+0.0.0
+:description: Full CLI reference for the gossm connect command, including all flags and positional arguments.
+
+The `gossm connect` command is the primary way to open a shell session on an EC2 instance via
+AWS Systems Manager. It handles profile selection, instance discovery, optional filtering, and
+finally launches the SSM session.
+
+== Synopsis
+
+[source,bash]
+----
+gossm connect [flags] [tag-filter...]
+----
+
+Positional arguments are treated as tag value filters — see <<tag-filters>> for details.
+
+== Flags
+
+[cols="2,1,4,2"]
+|===
+|Flag |Short |Description |Default
+
+|`--profile`
+|`-p`
+|AWS profile name to use. If omitted, gossm uses the `AWS_PROFILE` environment variable or
+presents an interactive profile picker.
+|`$AWS_PROFILE`
+
+|`--target`
+|`-t`
+|Instance ID to connect to directly, bypassing the instance picker.
+|_(none)_
+
+|`--filter`
+|`-f`
+|Comma-separated list of tag name filters. Restricts the instance list to those whose tag
+*names* match.
+|_(none)_
+
+|`--type`
+|`-y`
+|Include the EC2 instance type (e.g. `t3.medium`) in the instance list display.
+|`false`
+
+|`--az`
+|`-z`
+|Include the Availability Zone (e.g. `ap-southeast-2a`) in the instance list display.
+|`false`
+
+|`--ip`
+|`-i`
+|Include the private IP address in the instance list display.
+|`false`
+
+|`--local-port`
+|
+|Local port number for port forwarding. When set alongside `--remote-port`, gossm starts a
+port-forwarding session instead of a shell session.
+|_(none)_
+
+|`--remote-port`
+|
+|Remote port number for port forwarding.
+|_(none)_
+
+|`--remote-host`
+|
+|Remote host to which traffic is forwarded via the SSM instance. Useful when forwarding to a
+database or service that is reachable from the instance but not from the internet.
+|`localhost`
+
+|`--logging`
+|`-l`
+|Log verbosity level. Accepts `debug`, `info`, or `warn`.
+|`warn`
+|===
+
+== Profile Selection
+
+Profile resolution follows this order of precedence:
+
+1. Value of `--profile` / `-p` flag
+2. `AWS_PROFILE` environment variable
+3. Interactive picker built from profiles found in `~/.aws/config`
+
+[source,bash]
+----
+# Use the AWS_PROFILE environment variable
+export AWS_PROFILE=production
+gossm connect
+
+# Override the environment variable for this invocation
+gossm connect -p staging
+----
+
+See xref:configuration.adoc#aws-profiles[AWS Profiles] for how to set up `~/.aws/config`.
+
+== Instance Picker
+
+When no `--target` is given, gossm fetches all running EC2 instances visible to the chosen
+profile and presents them in a numbered list.
+
+[source,shell]
+----
+[1]   i-0aaa111bbb222ccc3   web-server-01.example.com
+[2]   i-0ddd444eee555fff6   api-server-01.example.com
+[3]   i-0ggg777hhh888iii9   db-proxy-01.example.com
+Launch number:> _
+----
+
+Additional columns are added to each row when the corresponding display flags are used:
+
+[source,bash]
+----
+gossm connect -p production --type --az --ip
+----
+
+[source,shell]
+----
+[1]   i-0aaa111bbb222ccc3   t3.medium   ap-southeast-2a   10.0.1.42    web-server-01.example.com
+[2]   i-0ddd444eee555fff6   t3.large    ap-southeast-2b   10.0.2.17    api-server-01.example.com
+----
+
+[[tag-filters]]
+== Tag Value Filters
+
+Any non-flag arguments passed to `gossm connect` are treated as case-insensitive partial matches
+against EC2 tag *values*. Only instances that have at least one tag value containing one of the
+given strings are shown.
+
+[source,bash]
+----
+# Show only instances with a tag value containing "prd"
+gossm connect prd
+
+# Show instances matching "prd" OR "web"
+gossm connect prd web
+
+# Combine with a profile flag
+gossm connect -p production prd api
+----
+
+The `--filter` flag (`-f`) works differently: it filters by tag *names* (keys) rather than values,
+and accepts a comma-separated list:
+
+[source,bash]
+----
+# Only show instances that have an "Env" tag
+gossm connect -f Env
+----
+
+TIP: Use positional tag-value filters for quick narrowing by environment or role name, and
+`--filter` when you want to restrict by the presence of a specific tag key.
+
+== Direct Connection
+
+If you already know the instance ID, skip both pickers:
+
+[source,bash]
+----
+gossm connect -p production -t i-0aaa111bbb222ccc3
+----
+
+== Port Forwarding Mode
+
+When `--local-port` and `--remote-port` are provided, gossm switches from a shell session to a
+port-forwarding session. The `--remote-host` flag controls which host the remote end connects to
+(defaults to `localhost`, meaning the instance itself).
+
+[source,bash]
+----
+gossm connect -p production -t i-0aaa111bbb222ccc3 \
+  --local-port 5432 --remote-port 5432
+----
+
+See xref:port-forwarding.adoc[] for a full explanation and examples.
+
+== Daemon Registration
+
+If `gossm daemon` is running, every session started by `gossm connect` automatically registers
+with the daemon via a Unix socket. The session will appear on the
+xref:daemon.adoc#dashboard[web dashboard] and its lifecycle events (start, stop) will be
+visible in real time.
+
+IMPORTANT: Pressing *Ctrl-Z* suspends the local `gossm` process, not the remote shell.
+Always type `exit` at the remote prompt to close a shell session cleanly.
+
+== Related Pages
+
+* xref:getting-started.adoc[]
+* xref:port-forwarding.adoc[]
+* xref:daemon.adoc[]
+* xref:configuration.adoc[]

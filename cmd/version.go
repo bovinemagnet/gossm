@@ -2,18 +2,27 @@ package cmd
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/spf13/cobra"
 )
 
-// Version is set at build time via -ldflags "-X github.com/bovinemagnet/gossm/cmd.Version=..."
-var Version = "dev"
+// These variables are set at build time via -ldflags.
+var (
+	Version = "dev"
+	Commit  = "unknown"
+	Date    = "unknown"
+)
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version of gossm",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("gossm version %s\n", Version)
+		fmt.Fprintf(cmd.OutOrStdout(), "gossm version %s\n", Version)
+		fmt.Fprintf(cmd.OutOrStdout(), "  commit:  %s\n", Commit)
+		fmt.Fprintf(cmd.OutOrStdout(), "  built:   %s\n", Date)
+		fmt.Fprintf(cmd.OutOrStdout(), "  go:      %s\n", runtime.Version())
+		fmt.Fprintf(cmd.OutOrStdout(), "  os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	},
 }
 

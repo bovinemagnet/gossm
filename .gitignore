@@ -22,3 +22,6 @@ docs/superpowers
 
 # Antora build output
 src/docs/build/
+
+# The environment
+.env

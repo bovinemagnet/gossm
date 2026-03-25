@@ -1,0 +1,182 @@
+= Port Forwarding
+Paul Snow
+0.0.0
+:description: How to use gossm to create SSM port-forwarding tunnels to internal services.
+
+gossm supports AWS SSM port forwarding, allowing you to create encrypted tunnels from your local
+machine to internal services through an SSM-managed EC2 instance — without opening any inbound
+firewall rules or using a traditional bastion host.
+
+== How Port Forwarding Works
+
+When you specify `--local-port` and `--remote-port`, gossm launches an SSM port-forwarding
+session instead of a shell session. Traffic flows as follows:
+
+[source]
+----
+Your machine            SSM Instance              Remote Service
+localhost:<local-port>  →  (SSM tunnel)  →  <remote-host>:<remote-port>
+----
+
+The SSM instance acts as a relay. The instance itself does not need to expose any ports publicly —
+all traffic travels over the encrypted SSM control channel to AWS and then to the instance.
+
+`--remote-host` controls which host the instance connects to at the far end:
+
+* If `--remote-host` is omitted (default `localhost`), the instance connects to itself on the
+  specified remote port. This is useful when the service runs on the instance.
+* If `--remote-host` is a different hostname or IP, the instance resolves that address from its
+  own network context. This is the common pattern for reaching RDS databases, ElastiCache
+  clusters, or other VPC-internal services.
+
+== Prerequisites
+
+Port forwarding requires the same prerequisites as shell sessions:
+
+* AWS CLI installed
+* AWS Session Manager Plugin installed (version 1.1.26.0 or later for port forwarding)
+* Instance has SSM Agent and appropriate IAM permissions
+
+NOTE: Ensure the Session Manager Plugin is up to date. Port-forwarding support was added in
+plugin version 1.1.26.0. Run `session-manager-plugin --version` to check.
+
+== Basic Usage
+
+=== Forward to a Port on the Instance Itself
+
+Use this pattern when the target service (e.g. a database, web server, or local proxy) runs
+directly on the EC2 instance:
+
+[source,bash]
+----
+gossm connect -p my-profile -t i-0123456789abcdef0 \
+  --local-port 8080 --remote-port 8080
+----
+
+You can then access the service at `http://localhost:8080` from your local machine.
+
+=== Forward to an Internal Service Via the Instance
+
+Use this pattern when the service is reachable from the VPC but not from the internet — for
+example, an RDS database, an ElastiCache cluster, or a service on another private host:
+
+[source,bash]
+----
+gossm connect -p my-profile -t i-0123456789abcdef0 \
+  --local-port 5432 --remote-port 5432 \
+  --remote-host db.internal.example.com
+----
+
+This forwards `localhost:5432` on your machine to `db.internal.example.com:5432`, routed through
+the SSM instance.
+
+== Common Use Cases
+
+=== PostgreSQL / RDS
+
+[source,bash]
+----
+gossm connect -p production -t i-0123456789abcdef0 \
+  --local-port 5432 --remote-port 5432 \
+  --remote-host mydb.cluster-abc123.ap-southeast-2.rds.amazonaws.com
+----
+
+Then connect your local client:
+
+[source,bash]
+----
+psql -h localhost -p 5432 -U myuser mydatabase
+----
+
+=== MySQL / Aurora
+
+[source,bash]
+----
+gossm connect -p production -t i-0123456789abcdef0 \
+  --local-port 3306 --remote-port 3306 \
+  --remote-host mydb.cluster-abc123.ap-southeast-2.rds.amazonaws.com
+----
+
+=== Redis / ElastiCache
+
+[source,bash]
+----
+gossm connect -p production -t i-0123456789abcdef0 \
+  --local-port 6379 --remote-port 6379 \
+  --remote-host mycluster.abc123.0001.apse2.cache.amazonaws.com
+----
+
+=== Internal HTTP API
+
+[source,bash]
+----
+gossm connect -p staging -t i-0123456789abcdef0 \
+  --local-port 9000 --remote-port 9000 \
+  --remote-host internal-api.staging.example.com
+----
+
+== Combining with Instance Picker
+
+You can omit `--target` and use the interactive instance picker with port forwarding:
+
+[source,bash]
+----
+gossm connect -p production \
+  --local-port 5432 --remote-port 5432 \
+  --remote-host db.internal.example.com
+----
+
+You will be prompted to select an instance from the list. The port-forwarding tunnel starts once
+you make a selection.
+
+TIP: Use xref:session-presets.adoc[Session Presets] to save frequently used port-forwarding
+configurations so they are available for one-click launch from the dashboard.
+
+== Tunnel Lifetime
+
+The tunnel remains active for as long as the `gossm` process is running. If you start the tunnel
+from the command line, it ends when you terminate the process (Ctrl-C) or close the terminal.
+
+For persistent tunnels that survive terminal closure, use the xref:daemon.adoc[daemon]:
+
+[source,bash]
+----
+# Start the daemon first
+gossm daemon start
+
+# Then connect — the tunnel registers with the daemon and persists
+gossm connect -p production -t i-0123456789abcdef0 \
+  --local-port 5432 --remote-port 5432 \
+  --remote-host db.internal.example.com
+----
+
+When managed by the daemon, tunnels appear on the xref:daemon.adoc#dashboard[web dashboard] and
+can be stopped from the browser.
+
+== Flags Reference
+
+For the full list of flags available to the `connect` command (including port-forwarding flags),
+see xref:connect.adoc[].
+
+[cols="2,4,2"]
+|===
+|Flag |Description |Default
+
+|`--local-port`
+|Port to listen on locally. Connections to this port are forwarded through the SSM tunnel.
+|_(required)_
+
+|`--remote-port`
+|Port to connect to at the remote end.
+|_(required)_
+
+|`--remote-host`
+|Hostname or IP address that the SSM instance connects to. Resolved from the instance's network.
+|`localhost`
+|===
+
+== Related Pages
+
+* xref:connect.adoc[]
+* xref:session-presets.adoc[]
+* xref:daemon.adoc[]

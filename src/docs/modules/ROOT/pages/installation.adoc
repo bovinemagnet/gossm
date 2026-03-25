@@ -1,0 +1,144 @@
+= Installation
+Paul Snow
+0.0.0
+:description: How to install gossm and its prerequisites on Linux, macOS, and Windows.
+
+This page covers installation of gossm and its required dependencies.
+gossm is a thin wrapper around the AWS CLI's SSM session functionality, so both the AWS CLI
+and the AWS Session Manager Plugin must be present on the host machine before gossm will work.
+
+== Prerequisites
+
+=== AWS CLI
+
+The AWS CLI must be installed and available on your `PATH`.
+
+https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html[Install the AWS CLI]
+
+=== AWS Session Manager Plugin
+
+The Session Manager Plugin extends the AWS CLI with the `ssm start-session` subcommand that
+gossm relies on.
+
+https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html[Install the AWS Session Manager Plugin]
+
+IMPORTANT: Without the Session Manager Plugin, gossm will fail to launch any session, even if
+the AWS CLI itself is correctly installed.
+
+=== AWS Credentials
+
+gossm uses standard AWS credential files. You will need at minimum:
+
+* `~/.aws/config` — profile definitions including region and role ARN
+* `~/.aws/credentials` — access key and secret for the base account
+
+See xref:configuration.adoc#aws-profiles[AWS Profiles] for a detailed explanation and examples.
+
+== Installing gossm
+
+=== Via Go Install
+
+If you have Go 1.21 or later installed, the simplest method is:
+
+[source,bash]
+----
+go install github.com/bovinemagnet/gossm@latest
+----
+
+This downloads, compiles, and places the `gossm` binary in `$GOPATH/bin` (or `$HOME/go/bin`
+if `GOPATH` is not set). Ensure that directory is on your `PATH`.
+
+TIP: Run `go version` to confirm your Go installation. If Go is not installed, download it from
+https://go.dev/dl/.
+
+=== Pre-built Binaries
+
+Pre-built binaries for the following platforms are produced by GoReleaser and attached to each
+GitHub release:
+
+[cols="1,1"]
+|===
+|Operating System |Architectures
+
+|Linux
+|amd64, arm64
+
+|macOS
+|amd64 (Intel), arm64 (Apple Silicon)
+
+|Windows
+|amd64, arm64
+|===
+
+Download the appropriate archive for your platform from the
+https://github.com/bovinemagnet/gossm/releases[Releases page], extract it, and place the
+`gossm` (or `gossm.exe` on Windows) binary somewhere on your `PATH`.
+
+== Platform-Specific Notes
+
+=== Arch Linux
+
+.Install AWS CLI v2 from the official repositories
+[source,bash]
+----
+sudo pacman -S aws-cli-v2
+----
+
+.Install the AWS Session Manager Plugin from the AUR
+[source,bash]
+----
+git clone https://aur.archlinux.org/aws-session-manager-plugin.git
+cd aws-session-manager-plugin
+makepkg -sri
+----
+
+NOTE: AUR packages are community-maintained. Review the `PKGBUILD` before running `makepkg` to
+verify the build steps are appropriate for your environment.
+
+=== macOS
+
+The AWS CLI can be installed via the official `.pkg` installer or with Homebrew:
+
+[source,bash]
+----
+brew install awscli
+----
+
+The Session Manager Plugin has a dedicated `.pkg` installer — refer to the AWS documentation
+link above for the macOS-specific steps.
+
+=== Windows
+
+AWS provides `.msi` installers for both the AWS CLI and the Session Manager Plugin on Windows.
+After installation, ensure both `aws` and the plugin are accessible from the command prompt or
+PowerShell.
+
+== Verifying the Installation
+
+Run the following commands to confirm everything is in place:
+
+[source,bash]
+----
+# Verify gossm
+gossm version
+
+# Verify the AWS CLI
+aws --version
+
+# Verify the Session Manager Plugin
+session-manager-plugin --version
+----
+
+A successful output will resemble:
+
+[source,shell]
+----
+gossm version 0.0.0
+aws-cli/2.x.x Python/3.x.x ...
+1.x.x.0
+----
+
+== Next Steps
+
+* xref:getting-started.adoc[Get started] with your first gossm connection.
+* xref:configuration.adoc[Configure] AWS profiles and gossm settings.
