@@ -16,3 +16,9 @@
 
 dist/
 gossm
+CLAUDE.md
+AGENT.md
+docs/superpowers
+
+# Antora build output
+src/docs/build/
