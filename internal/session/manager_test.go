@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -123,7 +124,7 @@ func argAfter(args []string, flag string) string {
 }
 
 func TestNewSessionManager(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 	if sm == nil {
 		t.Fatal("New returned nil")
 	}
@@ -133,7 +134,7 @@ func TestNewSessionManager(t *testing.T) {
 }
 
 func TestStartSession(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
 
 	id, err := sm.StartSession(testOpts("alpha"))
@@ -154,7 +155,7 @@ func TestStartSession(t *testing.T) {
 }
 
 func TestStopSession(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
 
 	id, err := sm.StartSession(testOpts("beta"))
@@ -183,7 +184,7 @@ func TestStopSession(t *testing.T) {
 }
 
 func TestListSessions(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
 
 	for _, name := range []string{"a", "b", "c"} {
@@ -199,7 +200,7 @@ func TestListSessions(t *testing.T) {
 }
 
 func TestSessionCount(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
 
 	if sm.SessionCount() != 0 {
@@ -219,7 +220,7 @@ func TestSessionCount(t *testing.T) {
 }
 
 func TestRegisterExternal(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 
 	id := sm.RegisterExternal(testOpts("ext"), 99999)
 	if id == "" {
@@ -239,7 +240,7 @@ func TestRegisterExternal(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
 
 	var wg sync.WaitGroup
@@ -281,7 +282,7 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestSparkData(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 
 	// Record a few points with external sessions to get non-zero values.
 	sm.RegisterExternal(testOpts("s1"), 1)
@@ -303,7 +304,7 @@ func TestSparkData(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	sm := New(sleepBuilder())
+	sm := New(sleepBuilder(), nil)
 
 	for _, name := range []string{"p", "q", "r"} {
 		if _, err := sm.StartSession(testOpts(name)); err != nil {
@@ -320,5 +321,80 @@ func TestClose(t *testing.T) {
 		if s.State != StateStopped && s.State != StateErrored && s.State != StateStopping {
 			t.Errorf("session %s state = %d after Close, want stopped/errored/stopping", s.ID, s.State)
 		}
+	}
+}
+
+// --- External session PID monitoring tests ---
+
+func TestExternalSessionDetectedAsStopped(t *testing.T) {
+	var alive atomic.Bool
+	alive.Store(true)
+	checker := func(pid int) bool { return alive.Load() }
+
+	sm := New(sleepBuilder(), checker)
+	defer sm.Close()
+
+	id := sm.RegisterExternal(testOpts("ext-mon"), 12345)
+
+	// Verify it starts as Running.
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if s.State != StateRunning {
+		t.Fatalf("initial state = %d, want StateRunning(%d)", s.State, StateRunning)
+	}
+
+	// Simulate process death.
+	alive.Store(false)
+
+	// Wait for monitoring tick (5s) plus margin.
+	time.Sleep(7 * time.Second)
+
+	s, ok = sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found after monitoring")
+	}
+	if s.State != StateStopped {
+		t.Errorf("state = %d, want StateStopped(%d)", s.State, StateStopped)
+	}
+}
+
+func TestExternalSessionMonitoringStopsOnClose(t *testing.T) {
+	checker := func(pid int) bool { return true } // always alive
+
+	sm := New(sleepBuilder(), checker)
+
+	sm.RegisterExternal(testOpts("ext-close"), 12345)
+
+	// Close should not hang — monitoring goroutine exits via stopCh.
+	done := make(chan struct{})
+	go func() {
+		sm.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close() did not return within 3s — monitoring goroutine may be leaked")
+	}
+}
+
+func TestNoMonitoringWhenCheckerNil(t *testing.T) {
+	sm := New(sleepBuilder(), nil) // nil checker
+
+	id := sm.RegisterExternal(testOpts("ext-nil"), 12345)
+
+	// Wait a bit — should not panic or change state.
+	time.Sleep(500 * time.Millisecond)
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if s.State != StateRunning {
+		t.Errorf("state = %d, want StateRunning(%d) — nil checker should not monitor", s.State, StateRunning)
 	}
 }

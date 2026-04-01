@@ -42,6 +42,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleStats renders the stats bar partial for HTMX polling.
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	data := s.buildDashboardData()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "stats.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // handleSessionsList renders the session list partial.
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	sessions := s.sm.ListSessions()

@@ -34,7 +34,7 @@ func testDaemon(cfg *config.Config, sm *session.SessionManager) *Daemon {
 
 func TestIPCRoundTrip(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	srv, err := NewIPCServer(cfg, sm, d)
@@ -78,7 +78,7 @@ func TestIPCRoundTrip(t *testing.T) {
 
 func TestIPCList(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	// Register a session so the list is non-empty.
@@ -129,7 +129,7 @@ func TestIPCList(t *testing.T) {
 
 func TestIPCRegisterShell(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	srv, err := NewIPCServer(cfg, sm, d)
@@ -180,7 +180,7 @@ func TestIPCRegisterShell(t *testing.T) {
 
 func TestIPCRegisterPortForward(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	srv, err := NewIPCServer(cfg, sm, d)

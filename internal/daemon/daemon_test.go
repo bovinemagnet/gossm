@@ -196,7 +196,7 @@ func TestStopIdempotent(t *testing.T) {
 
 func TestIPCSend_Status(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	srv, err := NewIPCServer(cfg, sm, d)
@@ -217,7 +217,7 @@ func TestIPCSend_Status(t *testing.T) {
 
 func TestIPCSend_UnknownAction(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	srv, err := NewIPCServer(cfg, sm, d)
@@ -238,7 +238,7 @@ func TestIPCSend_UnknownAction(t *testing.T) {
 
 func TestDaemonStatusClient(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	srv, err := NewIPCServer(cfg, sm, d)
@@ -262,7 +262,7 @@ func TestDaemonStatusClient(t *testing.T) {
 
 func TestRegisterWithDaemonClient(t *testing.T) {
 	cfg := testConfig(t)
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	d := testDaemon(cfg, sm)
 
 	srv, err := NewIPCServer(cfg, sm, d)

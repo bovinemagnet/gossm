@@ -66,7 +66,7 @@ func Start(cfg *config.Config) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon already running (pid %d)", existingPID)
 	}
 
-	sm := session.New(nil)
+	sm := session.New(nil, isProcessAlive)
 
 	d := &Daemon{
 		cfg:       cfg,

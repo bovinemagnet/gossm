@@ -1,6 +1,7 @@
 {{define "content"}}
     <!-- Stats bar -->
-    <div id="stats-bar" sse-swap="stats" hx-swap="innerHTML">
+    <div id="stats-bar" sse-swap="stats" hx-swap="innerHTML"
+         hx-get="/api/stats" hx-trigger="every 5s">
         {{template "stats.html" .}}
     </div>
 
@@ -30,7 +31,8 @@
                         <th class="px-6 py-3 font-medium">Actions</th>
                     </tr>
                 </thead>
-                <tbody id="session-table-body" sse-swap="sessions" hx-swap="innerHTML">
+                <tbody id="session-table-body" sse-swap="sessions" hx-swap="innerHTML"
+                       hx-get="/api/sessions" hx-trigger="every 5s">
                     {{template "session_list.html" .Sessions}}
                 </tbody>
             </table>

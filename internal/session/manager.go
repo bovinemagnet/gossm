@@ -14,19 +14,26 @@ import (
 // an SSM session.  Injecting this makes the manager testable.
 type CommandBuilder func(ctx context.Context, opts SessionOpts) *exec.Cmd
 
+// ProcessChecker tests whether a process with the given PID is still alive.
+// Injecting this allows the manager to monitor externally registered sessions.
+type ProcessChecker func(pid int) bool
+
 // SessionManager is a goroutine-safe registry of active SSM sessions.
 type SessionManager struct {
 	mu           sync.RWMutex
 	sessions     map[string]*Session
 	OnChange     chan SessionEvent
 	buildCommand CommandBuilder
+	checkProcess ProcessChecker
 	sparkData    []int // ring buffer of active session counts, last 60 entries
 	sparkIndex   int
+	stopCh       chan struct{}
 }
 
 // New creates a SessionManager.  If builder is nil the default AWS CLI
-// command builder is used.
-func New(builder CommandBuilder) *SessionManager {
+// command builder is used.  If checker is nil, externally registered
+// sessions will not be monitored for process exit.
+func New(builder CommandBuilder, checker ProcessChecker) *SessionManager {
 	if builder == nil {
 		builder = defaultCommandBuilder
 	}
@@ -34,7 +41,9 @@ func New(builder CommandBuilder) *SessionManager {
 		sessions:     make(map[string]*Session),
 		OnChange:     make(chan SessionEvent, 64),
 		buildCommand: builder,
+		checkProcess: checker,
 		sparkData:    make([]int, 60),
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -116,6 +125,30 @@ func (m *SessionManager) monitor(s *Session) {
 	m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
 }
 
+// monitorExternalPID polls the PID of an externally registered session
+// and marks it stopped when the process is no longer alive.
+func (m *SessionManager) monitorExternalPID(s *Session) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if !m.checkProcess(s.PID) {
+				m.mu.Lock()
+				if s.State == StateRunning || s.State == StateStarting {
+					s.State = StateStopped
+				}
+				m.mu.Unlock()
+				m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+				return
+			}
+		case <-m.stopCh:
+			return
+		}
+	}
+}
+
 // StopSession cancels the session context, waits briefly, then kills the
 // process if it is still running.
 func (m *SessionManager) StopSession(id string) error {
@@ -129,7 +162,9 @@ func (m *SessionManager) StopSession(id string) error {
 	m.mu.Unlock()
 
 	// Signal the subprocess via context cancellation.
-	s.cancel()
+	if s.cancel != nil {
+		s.cancel()
+	}
 
 	// Wait for the monitor goroutine to observe the exit, or kill after timeout.
 	if s.waitDone != nil {
@@ -196,6 +231,11 @@ func (m *SessionManager) RegisterExternal(opts SessionOpts, pid int) string {
 
 	m.emit(SessionEvent{Type: "added", SessionID: id, Timestamp: time.Now()})
 
+	// Monitor the external process so we detect when it exits.
+	if m.checkProcess != nil {
+		go m.monitorExternalPID(s)
+	}
+
 	return id
 }
 
@@ -234,8 +274,16 @@ func (m *SessionManager) RecordSparkPoint() {
 	m.sparkIndex = (m.sparkIndex + 1) % len(m.sparkData)
 }
 
-// Close stops every tracked session.
+// Close stops every tracked session and shuts down monitoring goroutines.
 func (m *SessionManager) Close() {
+	// Signal all monitorExternalPID goroutines to exit.
+	select {
+	case <-m.stopCh:
+		// Already closed.
+	default:
+		close(m.stopCh)
+	}
+
 	m.mu.RLock()
 	ids := make([]string, 0, len(m.sessions))
 	for id := range m.sessions {

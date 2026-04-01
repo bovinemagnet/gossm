@@ -86,6 +86,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /", s.handleDashboard)
 
 	// API endpoints.
+	s.mux.HandleFunc("GET /api/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
 	s.mux.HandleFunc("POST /api/sessions", s.handleStartSession)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleStopSession)

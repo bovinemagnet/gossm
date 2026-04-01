@@ -21,7 +21,7 @@ import (
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	cfg := &config.Config{
 		DashboardPort: 8877,
 		LogLevel:      "warn",
@@ -34,7 +34,7 @@ func testServer(t *testing.T) *Server {
 
 func testServerWithPresets(t *testing.T) *Server {
 	t.Helper()
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	cfg := &config.Config{
 		DashboardPort: 8877,
 		LogLevel:      "warn",
@@ -360,7 +360,7 @@ func mockFactory(api awsutil.EC2DescribeInstancesAPI, err error) EC2ClientFactor
 
 func testServerWithEC2(t *testing.T, factory EC2ClientFactory) *Server {
 	t.Helper()
-	sm := session.New(nil)
+	sm := session.New(nil, nil)
 	cfg := &config.Config{
 		DashboardPort: 8877,
 		LogLevel:      "warn",
