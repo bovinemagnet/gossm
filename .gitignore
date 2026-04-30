@@ -19,6 +19,10 @@ gossm
 CLAUDE.md
 AGENT.md
 docs/superpowers
+.playwright-mcp/
+.claude/
+.aws/
+build/
 
 # Antora build output
 src/docs/build/
