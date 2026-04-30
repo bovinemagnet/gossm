@@ -398,3 +398,36 @@ func TestNoMonitoringWhenCheckerNil(t *testing.T) {
 		t.Errorf("state = %d, want StateRunning(%d) — nil checker should not monitor", s.State, StateRunning)
 	}
 }
+
+func TestSessionDefaultProbeFields(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	id, err := sm.StartSession(testOpts("probe-default"))
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if !s.LastProbeAt.IsZero() {
+		t.Errorf("LastProbeAt = %v, want zero value", s.LastProbeAt)
+	}
+	if s.LastProbeOK {
+		t.Errorf("LastProbeOK = true, want false on a freshly started session")
+	}
+}
+
+func TestStateStalledDistinct(t *testing.T) {
+	if StateStalled == StateRunning {
+		t.Fatal("StateStalled must not collide with StateRunning")
+	}
+	if StateStalled == StateStopped {
+		t.Fatal("StateStalled must not collide with StateStopped")
+	}
+	if StateStalled == StateErrored {
+		t.Fatal("StateStalled must not collide with StateErrored")
+	}
+}

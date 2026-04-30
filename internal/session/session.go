@@ -21,6 +21,7 @@ const (
 	StateStarting SessionState = iota
 	StateRunning
 	StateStopping
+	StateStalled
 	StateStopped
 	StateErrored
 )
@@ -39,7 +40,9 @@ type Session struct {
 	RemoteHost   string // port forwarding only
 	StartedAt    time.Time
 	LastError    string
-	PID          int // PID of the aws ssm subprocess
+	PID          int       // PID of the aws ssm subprocess
+	LastProbeAt  time.Time // last time the tunnel probe ran (port-forward only)
+	LastProbeOK  bool      // outcome of the last probe (port-forward only)
 	cmd          *exec.Cmd
 	cancel       context.CancelFunc
 	waitDone     chan struct{} // closed when cmd.Wait() completes in monitor
