@@ -542,7 +542,7 @@ func TestProbeUpdatesLastProbeFields(t *testing.T) {
 	// Mark Running so monitorProbe doesn't skip it.
 	sm.markRunningForTest(id)
 
-	// Wait long enough for at least 3 probes.
+	// Wait long enough for at least 2 probes.
 	time.Sleep(150 * time.Millisecond)
 
 	s, ok := sm.GetSession(id)
@@ -682,4 +682,16 @@ func waitForState(sm *SessionManager, id string, want SessionState, timeout time
 		return fmt.Errorf("state = %d, want %d (after %v)", s.State, want, timeout)
 	}
 	return fmt.Errorf("session %s not found", id)
+}
+
+// markRunningForTest forces a session into StateRunning. It exists so
+// tests can drive sessions started with sleepBuilder() (which never
+// reach Running on their own because monitor() only updates state on
+// process exit) through state transitions exercised by monitorProbe.
+func (m *SessionManager) markRunningForTest(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[id]; ok {
+		s.State = StateRunning
+	}
 }
