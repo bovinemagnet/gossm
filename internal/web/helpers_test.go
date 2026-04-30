@@ -186,3 +186,55 @@ func TestRenderSparkSVG_AllZeros(t *testing.T) {
 		t.Error("expected SVG output for all-zero data")
 	}
 }
+
+func TestSessionStateClassStalled(t *testing.T) {
+	got := sessionStateClass(session.StateStalled)
+	if got != "bg-amber-500" {
+		t.Errorf("sessionStateClass(StateStalled) = %q, want %q", got, "bg-amber-500")
+	}
+}
+
+func TestSessionStateNameStalled(t *testing.T) {
+	got := sessionStateName(session.StateStalled)
+	if got != "Stalled" {
+		t.Errorf("sessionStateName(StateStalled) = %q, want %q", got, "Stalled")
+	}
+}
+
+func TestSessionProbeDisplayShellShowsDash(t *testing.T) {
+	s := session.Session{Type: session.TypeShell}
+	if got := sessionProbeDisplay(s); got != "—" {
+		t.Errorf("sessionProbeDisplay(shell) = %q, want %q", got, "—")
+	}
+}
+
+func TestSessionProbeDisplayUnprobed(t *testing.T) {
+	s := session.Session{Type: session.TypePortForward}
+	if got := sessionProbeDisplay(s); got != "pending" {
+		t.Errorf("sessionProbeDisplay(unprobed) = %q, want %q", got, "pending")
+	}
+}
+
+func TestSessionProbeDisplayOK(t *testing.T) {
+	s := session.Session{
+		Type:        session.TypePortForward,
+		LastProbeAt: time.Now().Add(-12 * time.Second),
+		LastProbeOK: true,
+	}
+	got := sessionProbeDisplay(s)
+	if !strings.HasPrefix(got, "ok ") {
+		t.Errorf("sessionProbeDisplay(ok) = %q, want prefix %q", got, "ok ")
+	}
+}
+
+func TestSessionProbeDisplayFail(t *testing.T) {
+	s := session.Session{
+		Type:        session.TypePortForward,
+		LastProbeAt: time.Now().Add(-3 * time.Second),
+		LastProbeOK: false,
+	}
+	got := sessionProbeDisplay(s)
+	if !strings.HasPrefix(got, "fail ") {
+		t.Errorf("sessionProbeDisplay(fail) = %q, want prefix %q", got, "fail ")
+	}
+}
