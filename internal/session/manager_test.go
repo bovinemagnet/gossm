@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os/exec"
 	"strings"
 	"sync"
@@ -396,5 +398,361 @@ func TestNoMonitoringWhenCheckerNil(t *testing.T) {
 	}
 	if s.State != StateRunning {
 		t.Errorf("state = %d, want StateRunning(%d) — nil checker should not monitor", s.State, StateRunning)
+	}
+}
+
+func TestSessionDefaultProbeFields(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	id, err := sm.StartSession(testOpts("probe-default"))
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if !s.LastProbeAt.IsZero() {
+		t.Errorf("LastProbeAt = %v, want zero value", s.LastProbeAt)
+	}
+	if s.LastProbeOK {
+		t.Errorf("LastProbeOK = true, want false on a freshly started session")
+	}
+}
+
+func TestStateStalledDistinct(t *testing.T) {
+	if StateStalled == StateRunning {
+		t.Fatal("StateStalled must not collide with StateRunning")
+	}
+	if StateStalled == StateStopped {
+		t.Fatal("StateStalled must not collide with StateStopped")
+	}
+	if StateStalled == StateErrored {
+		t.Fatal("StateStalled must not collide with StateErrored")
+	}
+}
+
+func TestDefaultTCPProberSucceedsOnLiveListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	s := &Session{
+		Type:      TypePortForward,
+		LocalPort: port,
+	}
+
+	if !defaultTCPProber(context.Background(), s) {
+		t.Errorf("defaultTCPProber returned false on a live listener at 127.0.0.1:%d", port)
+	}
+}
+
+func TestDefaultTCPProberFailsOnDeadPort(t *testing.T) {
+	// Bind a port to discover one that's free, then close the listener.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	s := &Session{
+		Type:      TypePortForward,
+		LocalPort: port,
+	}
+
+	if defaultTCPProber(context.Background(), s) {
+		t.Errorf("defaultTCPProber returned true for a closed port %d", port)
+	}
+}
+
+func TestSetProbeOverridesDefault(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	called := false
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		called = true
+		return true
+	}, 50*time.Millisecond, 100*time.Millisecond)
+
+	if sm.probeInterval != 50*time.Millisecond {
+		t.Errorf("probeInterval = %v, want 50ms", sm.probeInterval)
+	}
+	if sm.probeTimeout != 100*time.Millisecond {
+		t.Errorf("probeTimeout = %v, want 100ms", sm.probeTimeout)
+	}
+
+	if !sm.prober(context.Background(), &Session{}) {
+		t.Errorf("installed prober did not run")
+	}
+	if !called {
+		t.Errorf("installed prober was not invoked")
+	}
+}
+
+func TestNewInstallsDefaults(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	if sm.prober == nil {
+		t.Fatal("New should install a default prober")
+	}
+	if sm.probeInterval == 0 {
+		t.Fatal("New should install a non-zero probeInterval")
+	}
+	if sm.probeTimeout == 0 {
+		t.Fatal("New should install a non-zero probeTimeout")
+	}
+}
+
+// portForwardOpts builds a SessionOpts for a port-forward to a given local port.
+func portForwardOpts(name string, localPort int) SessionOpts {
+	return SessionOpts{
+		InstanceID:   "i-" + name,
+		InstanceName: name,
+		Profile:      "default",
+		Type:         TypePortForward,
+		LocalPort:    localPort,
+		RemotePort:   localPort,
+		RemoteHost:   "remote.local",
+	}
+}
+
+func TestProbeUpdatesLastProbeFields(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(portForwardOpts("probe-up", 12345))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	// Mark Running so monitorProbe doesn't skip it.
+	sm.markRunningForTest(id)
+
+	// Wait long enough for at least 2 probes.
+	time.Sleep(150 * time.Millisecond)
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if probes.Load() < 2 {
+		t.Errorf("probe count = %d, want >= 2", probes.Load())
+	}
+	if s.LastProbeAt.IsZero() {
+		t.Errorf("LastProbeAt should have been updated")
+	}
+	if !s.LastProbeOK {
+		t.Errorf("LastProbeOK should be true after a successful probe")
+	}
+}
+
+func TestProbeFailureTransitionsToStalled(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var fail atomic.Bool
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		return !fail.Load()
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(portForwardOpts("probe-stall", 12346))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sm.markRunningForTest(id)
+
+	// Drain the OnChange channel so we can wait for a fresh "updated" event.
+	drainEvents(sm.OnChange)
+
+	// Flip the prober to fail.
+	fail.Store(true)
+
+	if err := waitForState(sm, id, StateStalled, time.Second); err != nil {
+		t.Fatalf("waiting for StateStalled: %v", err)
+	}
+}
+
+func TestProbeRecoveryTransitionsBackToRunning(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var fail atomic.Bool
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		return !fail.Load()
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(portForwardOpts("probe-recover", 12347))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sm.markRunningForTest(id)
+
+	fail.Store(true)
+	if err := waitForState(sm, id, StateStalled, time.Second); err != nil {
+		t.Fatalf("waiting for StateStalled: %v", err)
+	}
+
+	fail.Store(false)
+	if err := waitForState(sm, id, StateRunning, time.Second); err != nil {
+		t.Fatalf("waiting for StateRunning recovery: %v", err)
+	}
+}
+
+func TestProbeNotStartedForShellSessions(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(testOpts("shell-no-probe"))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sm.markRunningForTest(id)
+
+	time.Sleep(150 * time.Millisecond)
+
+	if probes.Load() != 0 {
+		t.Errorf("shell session probed %d times; expected 0", probes.Load())
+	}
+}
+
+func TestProbeStopsOnClose(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	if _, err := sm.StartSession(portForwardOpts("close", 12348)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		sm.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not return — probe goroutine likely leaked")
+	}
+}
+
+// --- test helpers used above ---
+
+func drainEvents(ch <-chan SessionEvent) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
+func waitForState(sm *SessionManager, id string, want SessionState, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if s, ok := sm.GetSession(id); ok && s.State == want {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s, ok := sm.GetSession(id); ok {
+		return fmt.Errorf("state = %d, want %d (after %v)", s.State, want, timeout)
+	}
+	return fmt.Errorf("session %s not found", id)
+}
+
+// markRunningForTest forces a session into StateRunning. It exists so
+// tests can drive sessions started with sleepBuilder() (which never
+// reach Running on their own because monitor() only updates state on
+// process exit) through state transitions exercised by monitorProbe.
+func (m *SessionManager) markRunningForTest(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[id]; ok {
+		s.State = StateRunning
+	}
+}
+
+func TestProbeFiresImmediately(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 500*time.Millisecond, 100*time.Millisecond)
+
+	if _, err := sm.StartSession(portForwardOpts("immediate", 12350)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	// Wait well under the probe interval. With an immediate probe, at
+	// least one probe should have fired by now.
+	time.Sleep(80 * time.Millisecond)
+
+	if probes.Load() == 0 {
+		t.Errorf("expected ≥1 probe within 80ms (interval is 500ms) — first probe should fire immediately, not wait a full interval")
+	}
+}
+
+func TestRegisterExternalPortForwardIsProbed(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	sm.RegisterExternal(portForwardOpts("ext-pf", 12349), 99999)
+
+	time.Sleep(120 * time.Millisecond)
+
+	if probes.Load() == 0 {
+		t.Errorf("externally registered port-forward session was not probed")
+	}
+}
+
+func TestStartSessionSetsStateRunning(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	id, err := sm.StartSession(testOpts("running"))
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if s.State != StateRunning {
+		t.Errorf("State = %d, want StateRunning(%d) — session should be Running once subprocess is spawned, not Starting",
+			s.State, StateRunning)
 	}
 }

@@ -5,6 +5,9 @@
             <span class="status-dot {{sessionStateClass .State}}"></span>
             <span class="text-xs text-slate-400">{{sessionStateName .State}}</span>
         </div>
+        {{if eq (sessionTypeName .Type) "Port Forward"}}
+        <div class="text-[10px] text-slate-500 mt-1">probe: {{sessionProbeDisplay .}}</div>
+        {{end}}
     </td>
     <td class="px-6 py-3 font-medium text-slate-200">{{.InstanceName}}</td>
     <td class="px-6 py-3 font-mono text-xs text-slate-400">{{.InstanceID}}</td>
@@ -18,7 +21,8 @@
     <td class="px-6 py-3 font-mono text-xs text-slate-400">{{portDisplay .}}</td>
     <td class="px-6 py-3 text-slate-400 text-xs">{{uptimeSince .StartedAt}}</td>
     <td class="px-6 py-3">
-        {{if or (eq (sessionStateName .State) "Running") (eq (sessionStateName .State) "Starting")}}
+        {{$state := sessionStateName .State}}
+        {{if or (eq $state "Running") (eq $state "Starting") (eq $state "Stalled")}}
         <button hx-delete="/api/sessions/{{.ID}}"
                 hx-target="#session-table-body"
                 hx-swap="innerHTML"

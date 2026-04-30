@@ -1,11 +1,13 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -556,6 +558,76 @@ func TestDashboardIncludesInstancePicker(t *testing.T) {
 	}
 	if !strings.Contains(body, "/api/instances") {
 		t.Error("dashboard does not contain /api/instances HTMX endpoint")
+	}
+}
+
+func TestSessionRowRendersProbeAndStalledStop(t *testing.T) {
+	sm := session.New(nil, nil)
+	defer sm.Close()
+
+	srv := NewServer(sm, &config.Config{}, time.Now(), nil)
+	defer srv.Stop()
+
+	// Build a port-forward session that's been probed and is in StateStalled.
+	s := session.Session{
+		ID:           "abc-123",
+		InstanceID:   "i-xyz",
+		InstanceName: "db",
+		Profile:      "prod",
+		Type:         session.TypePortForward,
+		State:        session.StateStalled,
+		LocalPort:    5432,
+		RemotePort:   5432,
+		RemoteHost:   "db.internal",
+		StartedAt:    time.Now().Add(-2 * time.Minute),
+		LastProbeAt:  time.Now().Add(-5 * time.Second),
+		LastProbeOK:  false,
+	}
+
+	var buf bytes.Buffer
+	if err := srv.tmpl.ExecuteTemplate(&buf, "session_row.html", s); err != nil {
+		t.Fatalf("execute template: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "Stalled") {
+		t.Errorf("rendered row missing 'Stalled' label: %s", out)
+	}
+	if !strings.Contains(out, "fail ") {
+		t.Errorf("rendered row missing probe 'fail ' indicator: %s", out)
+	}
+	// Stop button should be available while Stalled.
+	if !strings.Contains(out, `hx-delete="/api/sessions/abc-123"`) {
+		t.Errorf("rendered row missing Stop button while Stalled: %s", out)
+	}
+}
+
+func TestStatsRendersHeartbeat(t *testing.T) {
+	srv := testServer(t)
+
+	req := httptest.NewRequest("GET", "/api/stats", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Updated ") {
+		t.Errorf("stats response missing 'Updated ' label: %s", body)
+	}
+	// Match an HH:MM:SS pattern. Use a simple regexp.
+	matched, err := regexp.MatchString(`Updated\s+\d{2}:\d{2}:\d{2}`, body)
+	if err != nil {
+		t.Fatalf("regexp: %v", err)
+	}
+	if !matched {
+		t.Errorf("stats response does not contain a HH:MM:SS timestamp: %s", body)
+	}
+	// The pulse element should be rendered with the heartbeat-pulse class.
+	if !strings.Contains(body, "heartbeat-pulse") {
+		t.Errorf("stats response missing pulse element with class 'heartbeat-pulse': %s", body)
 	}
 }
 

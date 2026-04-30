@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"net"
 	"os/exec"
 	"sync"
 	"time"
@@ -18,16 +19,43 @@ type CommandBuilder func(ctx context.Context, opts SessionOpts) *exec.Cmd
 // Injecting this allows the manager to monitor externally registered sessions.
 type ProcessChecker func(pid int) bool
 
+// Prober tests whether a port-forward tunnel is still functional.
+// It should return true when the tunnel passes its liveness check.
+// The context carries the probe deadline.
+type Prober func(ctx context.Context, s *Session) bool
+
+// defaultTCPProber dials 127.0.0.1:LocalPort with the deadline carried
+// by ctx. A successful connect indicates the local plugin listener is
+// up; over time, dial failures correlate strongly with a torn-down
+// tunnel because the plugin closes its listener when the SSM control
+// channel is lost.
+func defaultTCPProber(ctx context.Context, s *Session) bool {
+	if s.Type != TypePortForward || s.LocalPort == 0 {
+		return false
+	}
+	d := net.Dialer{}
+	addr := fmt.Sprintf("127.0.0.1:%d", s.LocalPort)
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 // SessionManager is a goroutine-safe registry of active SSM sessions.
 type SessionManager struct {
-	mu           sync.RWMutex
-	sessions     map[string]*Session
-	OnChange     chan SessionEvent
-	buildCommand CommandBuilder
-	checkProcess ProcessChecker
-	sparkData    []int // ring buffer of active session counts, last 60 entries
-	sparkIndex   int
-	stopCh       chan struct{}
+	mu            sync.RWMutex
+	sessions      map[string]*Session
+	OnChange      chan SessionEvent
+	buildCommand  CommandBuilder
+	checkProcess  ProcessChecker
+	prober        Prober
+	probeInterval time.Duration
+	probeTimeout  time.Duration
+	sparkData     []int // ring buffer of active session counts, last 60 entries
+	sparkIndex    int
+	stopCh        chan struct{}
 }
 
 // New creates a SessionManager.  If builder is nil the default AWS CLI
@@ -38,12 +66,31 @@ func New(builder CommandBuilder, checker ProcessChecker) *SessionManager {
 		builder = defaultCommandBuilder
 	}
 	return &SessionManager{
-		sessions:     make(map[string]*Session),
-		OnChange:     make(chan SessionEvent, 64),
-		buildCommand: builder,
-		checkProcess: checker,
-		sparkData:    make([]int, 60),
-		stopCh:       make(chan struct{}),
+		sessions:      make(map[string]*Session),
+		OnChange:      make(chan SessionEvent, 64),
+		buildCommand:  builder,
+		checkProcess:  checker,
+		prober:        defaultTCPProber,
+		probeInterval: 30 * time.Second,
+		probeTimeout:  2 * time.Second,
+		sparkData:     make([]int, 60),
+		stopCh:        make(chan struct{}),
+	}
+}
+
+// SetProbe overrides the prober, probe interval, and per-probe timeout.
+// Pass interval=0 or timeout=0 to keep the existing values for those
+// individual knobs. Pass prober=nil to disable probing entirely.
+// Intended for tests and for higher layers wanting custom liveness checks.
+func (m *SessionManager) SetProbe(p Prober, interval, timeout time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.prober = p
+	if interval > 0 {
+		m.probeInterval = interval
+	}
+	if timeout > 0 {
+		m.probeTimeout = timeout
 	}
 }
 
@@ -95,6 +142,7 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 	}
 
 	s.PID = cmd.Process.Pid
+	s.State = StateRunning
 
 	m.mu.Lock()
 	m.sessions[id] = s
@@ -104,6 +152,11 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 
 	// Monitor the subprocess in the background.
 	go m.monitor(s)
+
+	// Probe the tunnel for liveness if this is a port-forward session.
+	if s.Type == TypePortForward {
+		go m.monitorProbe(s)
+	}
 
 	return id, nil
 }
@@ -236,6 +289,10 @@ func (m *SessionManager) RegisterExternal(opts SessionOpts, pid int) string {
 		go m.monitorExternalPID(s)
 	}
 
+	if s.Type == TypePortForward {
+		go m.monitorProbe(s)
+	}
+
 	return id
 }
 
@@ -303,3 +360,81 @@ func (m *SessionManager) emit(e SessionEvent) {
 	default:
 	}
 }
+
+// monitorProbe periodically runs the prober for a port-forward session.
+// On a Running → probe-fails edge it transitions to StateStalled; on a
+// Stalled → probe-succeeds edge it transitions back to Running. The
+// goroutine exits when the session leaves an active state, when stopCh
+// is closed, or when the prober is nil.
+func (m *SessionManager) monitorProbe(s *Session) {
+	m.mu.RLock()
+	interval := m.probeInterval
+	timeout := m.probeTimeout
+	prober := m.prober
+	m.mu.RUnlock()
+
+	if prober == nil || interval <= 0 {
+		return
+	}
+
+	// Run an initial probe immediately so the dashboard does not show
+	// "pending" for a full interval after the session starts.
+	if !m.runProbe(s, prober, timeout) {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			if !m.runProbe(s, prober, timeout) {
+				return
+			}
+		}
+	}
+}
+
+// runProbe executes a single probe against s and applies the result to
+// the session record. It returns false to signal that monitorProbe
+// should exit (because the session has been removed from the registry
+// or has reached a terminal state).
+func (m *SessionManager) runProbe(s *Session, prober Prober, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ok := prober(ctx, s)
+	cancel()
+
+	m.mu.Lock()
+	cur, exists := m.sessions[s.ID]
+	if !exists {
+		m.mu.Unlock()
+		return false
+	}
+	if cur.State == StateStopping || cur.State == StateStopped || cur.State == StateErrored {
+		m.mu.Unlock()
+		return false
+	}
+
+	cur.LastProbeAt = time.Now()
+	cur.LastProbeOK = ok
+
+	stateChanged := false
+	switch {
+	case !ok && cur.State == StateRunning:
+		cur.State = StateStalled
+		stateChanged = true
+	case ok && cur.State == StateStalled:
+		cur.State = StateRunning
+		stateChanged = true
+	}
+	m.mu.Unlock()
+
+	if stateChanged {
+		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+	}
+	return true
+}
+

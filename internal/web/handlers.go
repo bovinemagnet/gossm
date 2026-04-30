@@ -26,6 +26,7 @@ type DashboardData struct {
 	Port         int
 	SparkSVG     template.HTML
 	Presets      []config.SessionPreset
+	LastUpdate   string
 }
 
 // handleDashboard renders the full dashboard page.
@@ -276,6 +277,7 @@ func (s *Server) buildDashboardData() DashboardData {
 		Port:         s.cfg.DashboardPort,
 		SparkSVG:     template.HTML(renderSparkSVG(s.sm.SparkData())),
 		Presets:      s.cfg.Presets,
+		LastUpdate:   time.Now().Format("15:04:05"),
 	}
 }
 
@@ -336,6 +338,8 @@ func sessionStateClass(state session.SessionState) string {
 		return "bg-yellow-500"
 	case session.StateStopping:
 		return "bg-yellow-500"
+	case session.StateStalled:
+		return "bg-amber-500"
 	case session.StateErrored:
 		return "bg-red-500"
 	case session.StateStopped:
@@ -354,6 +358,8 @@ func sessionStateName(state session.SessionState) string {
 		return "Starting"
 	case session.StateStopping:
 		return "Stopping"
+	case session.StateStalled:
+		return "Stalled"
 	case session.StateErrored:
 		return "Errored"
 	case session.StateStopped:
@@ -384,6 +390,36 @@ func portDisplay(s session.Session) string {
 		return fmt.Sprintf("%d → %s:%d", s.LocalPort, s.RemoteHost, s.RemotePort)
 	}
 	return fmt.Sprintf("%d → %d", s.LocalPort, s.RemotePort)
+}
+
+// sessionProbeDisplay formats the probe outcome for the dashboard.
+// Shell sessions return "—" since they aren't probed. Port-forward
+// sessions return "pending" until the first probe fires, then either
+// "ok <Ns ago>" or "fail <Ns ago>".
+func sessionProbeDisplay(s session.Session) string {
+	if s.Type != session.TypePortForward {
+		return "—"
+	}
+	if s.LastProbeAt.IsZero() {
+		return "pending"
+	}
+	age := time.Since(s.LastProbeAt)
+	prefix := "ok"
+	if !s.LastProbeOK {
+		prefix = "fail"
+	}
+	return fmt.Sprintf("%s %s ago", prefix, shortDuration(age))
+}
+
+// shortDuration formats a duration as e.g. "4s", "2m", "1h".
+func shortDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%dh", int(d.Hours()))
 }
 
 // uptimeSince returns a human-readable duration since the given time.

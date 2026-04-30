@@ -36,11 +36,12 @@ type Server struct {
 // and starts the SSE broker.
 func NewServer(sm *session.SessionManager, cfg *config.Config, startedAt time.Time, ec2Factory EC2ClientFactory) *Server {
 	funcMap := template.FuncMap{
-		"sessionStateClass": sessionStateClass,
-		"sessionStateName":  sessionStateName,
-		"sessionTypeName":   sessionTypeName,
-		"portDisplay":       portDisplay,
-		"uptimeSince":       uptimeSince,
+		"sessionStateClass":   sessionStateClass,
+		"sessionStateName":    sessionStateName,
+		"sessionTypeName":     sessionTypeName,
+		"portDisplay":         portDisplay,
+		"sessionProbeDisplay": sessionProbeDisplay,
+		"uptimeSince":         uptimeSince,
 	}
 
 	tmpl := template.Must(
