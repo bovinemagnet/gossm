@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"net"
 	"os/exec"
 	"strings"
 	"sync"
@@ -429,5 +430,43 @@ func TestStateStalledDistinct(t *testing.T) {
 	}
 	if StateStalled == StateErrored {
 		t.Fatal("StateStalled must not collide with StateErrored")
+	}
+}
+
+func TestDefaultTCPProberSucceedsOnLiveListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	s := &Session{
+		Type:      TypePortForward,
+		LocalPort: port,
+	}
+
+	if !defaultTCPProber(context.Background(), s) {
+		t.Errorf("defaultTCPProber returned false on a live listener at 127.0.0.1:%d", port)
+	}
+}
+
+func TestDefaultTCPProberFailsOnDeadPort(t *testing.T) {
+	// Bind a port to discover one that's free, then close the listener.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	s := &Session{
+		Type:      TypePortForward,
+		LocalPort: port,
+	}
+
+	if defaultTCPProber(context.Background(), s) {
+		t.Errorf("defaultTCPProber returned true for a closed port %d", port)
 	}
 }

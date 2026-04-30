@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"net"
 	"os/exec"
 	"sync"
 	"time"
@@ -17,6 +18,30 @@ type CommandBuilder func(ctx context.Context, opts SessionOpts) *exec.Cmd
 // ProcessChecker tests whether a process with the given PID is still alive.
 // Injecting this allows the manager to monitor externally registered sessions.
 type ProcessChecker func(pid int) bool
+
+// Prober tests whether a port-forward tunnel is still functional.
+// It should return true when the tunnel passes its liveness check.
+// The context carries the probe deadline.
+type Prober func(ctx context.Context, s *Session) bool
+
+// defaultTCPProber dials 127.0.0.1:LocalPort with the deadline carried
+// by ctx. A successful connect indicates the local plugin listener is
+// up; over time, dial failures correlate strongly with a torn-down
+// tunnel because the plugin closes its listener when the SSM control
+// channel is lost.
+func defaultTCPProber(ctx context.Context, s *Session) bool {
+	if s.Type != TypePortForward || s.LocalPort == 0 {
+		return false
+	}
+	d := net.Dialer{}
+	addr := fmt.Sprintf("127.0.0.1:%d", s.LocalPort)
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
 
 // SessionManager is a goroutine-safe registry of active SSM sessions.
 type SessionManager struct {
