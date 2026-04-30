@@ -377,6 +377,12 @@ func (m *SessionManager) monitorProbe(s *Session) {
 		return
 	}
 
+	// Run an initial probe immediately so the dashboard does not show
+	// "pending" for a full interval after the session starts.
+	if !m.runProbe(s, prober, timeout) {
+		return
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -385,41 +391,50 @@ func (m *SessionManager) monitorProbe(s *Session) {
 		case <-m.stopCh:
 			return
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
-			ok := prober(ctx, s)
-			cancel()
-
-			m.mu.Lock()
-			cur, exists := m.sessions[s.ID]
-			if !exists {
-				m.mu.Unlock()
+			if !m.runProbe(s, prober, timeout) {
 				return
-			}
-
-			// Exit if the session has left an active state.
-			if cur.State == StateStopping || cur.State == StateStopped || cur.State == StateErrored {
-				m.mu.Unlock()
-				return
-			}
-
-			cur.LastProbeAt = time.Now()
-			cur.LastProbeOK = ok
-
-			stateChanged := false
-			switch {
-			case !ok && cur.State == StateRunning:
-				cur.State = StateStalled
-				stateChanged = true
-			case ok && cur.State == StateStalled:
-				cur.State = StateRunning
-				stateChanged = true
-			}
-			m.mu.Unlock()
-
-			if stateChanged {
-				m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
 			}
 		}
 	}
+}
+
+// runProbe executes a single probe against s and applies the result to
+// the session record. It returns false to signal that monitorProbe
+// should exit (because the session has been removed from the registry
+// or has reached a terminal state).
+func (m *SessionManager) runProbe(s *Session, prober Prober, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ok := prober(ctx, s)
+	cancel()
+
+	m.mu.Lock()
+	cur, exists := m.sessions[s.ID]
+	if !exists {
+		m.mu.Unlock()
+		return false
+	}
+	if cur.State == StateStopping || cur.State == StateStopped || cur.State == StateErrored {
+		m.mu.Unlock()
+		return false
+	}
+
+	cur.LastProbeAt = time.Now()
+	cur.LastProbeOK = ok
+
+	stateChanged := false
+	switch {
+	case !ok && cur.State == StateRunning:
+		cur.State = StateStalled
+		stateChanged = true
+	case ok && cur.State == StateStalled:
+		cur.State = StateRunning
+		stateChanged = true
+	}
+	m.mu.Unlock()
+
+	if stateChanged {
+		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+	}
+	return true
 }
 

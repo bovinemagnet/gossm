@@ -696,6 +696,48 @@ func (m *SessionManager) markRunningForTest(id string) {
 	}
 }
 
+func TestProbeFiresImmediately(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 500*time.Millisecond, 100*time.Millisecond)
+
+	if _, err := sm.StartSession(portForwardOpts("immediate", 12350)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	// Wait well under the probe interval. With an immediate probe, at
+	// least one probe should have fired by now.
+	time.Sleep(80 * time.Millisecond)
+
+	if probes.Load() == 0 {
+		t.Errorf("expected ≥1 probe within 80ms (interval is 500ms) — first probe should fire immediately, not wait a full interval")
+	}
+}
+
+func TestRegisterExternalPortForwardIsProbed(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	sm.RegisterExternal(portForwardOpts("ext-pf", 12349), 99999)
+
+	time.Sleep(120 * time.Millisecond)
+
+	if probes.Load() == 0 {
+		t.Errorf("externally registered port-forward session was not probed")
+	}
+}
+
 func TestStartSessionSetsStateRunning(t *testing.T) {
 	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
