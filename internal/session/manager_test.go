@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os/exec"
 	"strings"
@@ -509,4 +510,176 @@ func TestNewInstallsDefaults(t *testing.T) {
 	if sm.probeTimeout == 0 {
 		t.Fatal("New should install a non-zero probeTimeout")
 	}
+}
+
+// portForwardOpts builds a SessionOpts for a port-forward to a given local port.
+func portForwardOpts(name string, localPort int) SessionOpts {
+	return SessionOpts{
+		InstanceID:   "i-" + name,
+		InstanceName: name,
+		Profile:      "default",
+		Type:         TypePortForward,
+		LocalPort:    localPort,
+		RemotePort:   localPort,
+		RemoteHost:   "remote.local",
+	}
+}
+
+func TestProbeUpdatesLastProbeFields(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(portForwardOpts("probe-up", 12345))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	// Mark Running so monitorProbe doesn't skip it.
+	sm.markRunningForTest(id)
+
+	// Wait long enough for at least 3 probes.
+	time.Sleep(150 * time.Millisecond)
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if probes.Load() < 2 {
+		t.Errorf("probe count = %d, want >= 2", probes.Load())
+	}
+	if s.LastProbeAt.IsZero() {
+		t.Errorf("LastProbeAt should have been updated")
+	}
+	if !s.LastProbeOK {
+		t.Errorf("LastProbeOK should be true after a successful probe")
+	}
+}
+
+func TestProbeFailureTransitionsToStalled(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var fail atomic.Bool
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		return !fail.Load()
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(portForwardOpts("probe-stall", 12346))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sm.markRunningForTest(id)
+
+	// Drain the OnChange channel so we can wait for a fresh "updated" event.
+	drainEvents(sm.OnChange)
+
+	// Flip the prober to fail.
+	fail.Store(true)
+
+	if err := waitForState(sm, id, StateStalled, time.Second); err != nil {
+		t.Fatalf("waiting for StateStalled: %v", err)
+	}
+}
+
+func TestProbeRecoveryTransitionsBackToRunning(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var fail atomic.Bool
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		return !fail.Load()
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(portForwardOpts("probe-recover", 12347))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sm.markRunningForTest(id)
+
+	fail.Store(true)
+	if err := waitForState(sm, id, StateStalled, time.Second); err != nil {
+		t.Fatalf("waiting for StateStalled: %v", err)
+	}
+
+	fail.Store(false)
+	if err := waitForState(sm, id, StateRunning, time.Second); err != nil {
+		t.Fatalf("waiting for StateRunning recovery: %v", err)
+	}
+}
+
+func TestProbeNotStartedForShellSessions(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	var probes atomic.Int32
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(testOpts("shell-no-probe"))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	sm.markRunningForTest(id)
+
+	time.Sleep(150 * time.Millisecond)
+
+	if probes.Load() != 0 {
+		t.Errorf("shell session probed %d times; expected 0", probes.Load())
+	}
+}
+
+func TestProbeStopsOnClose(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		return true
+	}, 30*time.Millisecond, 50*time.Millisecond)
+
+	if _, err := sm.StartSession(portForwardOpts("close", 12348)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		sm.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not return — probe goroutine likely leaked")
+	}
+}
+
+// --- test helpers used above ---
+
+func drainEvents(ch <-chan SessionEvent) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
+func waitForState(sm *SessionManager, id string, want SessionState, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if s, ok := sm.GetSession(id); ok && s.State == want {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s, ok := sm.GetSession(id); ok {
+		return fmt.Errorf("state = %d, want %d (after %v)", s.State, want, timeout)
+	}
+	return fmt.Errorf("session %s not found", id)
 }

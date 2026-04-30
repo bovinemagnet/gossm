@@ -152,6 +152,11 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 	// Monitor the subprocess in the background.
 	go m.monitor(s)
 
+	// Probe the tunnel for liveness if this is a port-forward session.
+	if s.Type == TypePortForward {
+		go m.monitorProbe(s)
+	}
+
 	return id, nil
 }
 
@@ -283,6 +288,10 @@ func (m *SessionManager) RegisterExternal(opts SessionOpts, pid int) string {
 		go m.monitorExternalPID(s)
 	}
 
+	if s.Type == TypePortForward {
+		go m.monitorProbe(s)
+	}
+
 	return id
 }
 
@@ -348,5 +357,79 @@ func (m *SessionManager) emit(e SessionEvent) {
 	select {
 	case m.OnChange <- e:
 	default:
+	}
+}
+
+// monitorProbe periodically runs the prober for a port-forward session.
+// On a Running → probe-fails edge it transitions to StateStalled; on a
+// Stalled → probe-succeeds edge it transitions back to Running. The
+// goroutine exits when the session leaves an active state, when stopCh
+// is closed, or when the prober is nil.
+func (m *SessionManager) monitorProbe(s *Session) {
+	m.mu.RLock()
+	interval := m.probeInterval
+	timeout := m.probeTimeout
+	prober := m.prober
+	m.mu.RUnlock()
+
+	if prober == nil || interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			ok := prober(ctx, s)
+			cancel()
+
+			m.mu.Lock()
+			cur, exists := m.sessions[s.ID]
+			if !exists {
+				m.mu.Unlock()
+				return
+			}
+
+			// Exit if the session has left an active state.
+			if cur.State == StateStopping || cur.State == StateStopped || cur.State == StateErrored {
+				m.mu.Unlock()
+				return
+			}
+
+			cur.LastProbeAt = time.Now()
+			cur.LastProbeOK = ok
+
+			stateChanged := false
+			switch {
+			case !ok && cur.State == StateRunning:
+				cur.State = StateStalled
+				stateChanged = true
+			case ok && cur.State == StateStalled:
+				cur.State = StateRunning
+				stateChanged = true
+			}
+			m.mu.Unlock()
+
+			if stateChanged {
+				m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+			}
+		}
+	}
+}
+
+// markRunningForTest forces a session into StateRunning. It exists so
+// tests can drive sessions started with sleepBuilder() (which never
+// reach Running on their own because monitor() only updates state on
+// process exit) through state transitions exercised by monitorProbe.
+func (m *SessionManager) markRunningForTest(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[id]; ok {
+		s.State = StateRunning
 	}
 }
