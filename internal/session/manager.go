@@ -142,6 +142,7 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 	}
 
 	s.PID = cmd.Process.Pid
+	s.State = StateRunning
 
 	m.mu.Lock()
 	m.sessions[id] = s

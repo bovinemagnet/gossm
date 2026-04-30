@@ -695,3 +695,22 @@ func (m *SessionManager) markRunningForTest(id string) {
 		s.State = StateRunning
 	}
 }
+
+func TestStartSessionSetsStateRunning(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	id, err := sm.StartSession(testOpts("running"))
+	if err != nil {
+		t.Fatalf("StartSession failed: %v", err)
+	}
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if s.State != StateRunning {
+		t.Errorf("State = %d, want StateRunning(%d) — session should be Running once subprocess is spawned, not Starting",
+			s.State, StateRunning)
+	}
+}
