@@ -153,6 +153,16 @@ gossm connect -p production -t i-0123456789abcdef0 \
 When managed by the daemon, tunnels appear on the xref:daemon.adoc#dashboard[web dashboard] and
 can be stopped from the browser.
 
+== Tunnel liveness
+
+Port-forward sessions are probed every 30 seconds by the daemon. The probe opens a short TCP connection to `127.0.0.1:<local-port>` with a 2-second timeout and records the outcome on the session.
+
+The dashboard surfaces the result under the status cell as `probe: ok 12s ago` or `probe: fail 4s ago`. A run of failures flips the session into the *Stalled* state (amber dot) so you can tell at a glance that the tunnel is no longer carrying traffic, even when the local `session-manager-plugin` process is still running.
+
+The probe doubles as keepalive traffic: most networks will not idle-out a tunnel that sees a TCP connection every 30 seconds, so this also reduces the rate at which AWS Session Manager closes idle sessions.
+
+Stalled sessions can be stopped from the dashboard like any other session. Probing is not performed for shell sessions; their status cell shows `probe: —`.
+
 == Flags Reference
 
 For the full list of flags available to the `connect` command (including port-forwarding flags),
