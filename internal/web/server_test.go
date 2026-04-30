@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -598,6 +599,35 @@ func TestSessionRowRendersProbeAndStalledStop(t *testing.T) {
 	// Stop button should be available while Stalled.
 	if !strings.Contains(out, `hx-delete="/api/sessions/abc-123"`) {
 		t.Errorf("rendered row missing Stop button while Stalled: %s", out)
+	}
+}
+
+func TestStatsRendersHeartbeat(t *testing.T) {
+	srv := testServer(t)
+
+	req := httptest.NewRequest("GET", "/api/stats", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Updated ") {
+		t.Errorf("stats response missing 'Updated ' label: %s", body)
+	}
+	// Match an HH:MM:SS pattern. Use a simple regexp.
+	matched, err := regexp.MatchString(`Updated\s+\d{2}:\d{2}:\d{2}`, body)
+	if err != nil {
+		t.Fatalf("regexp: %v", err)
+	}
+	if !matched {
+		t.Errorf("stats response does not contain a HH:MM:SS timestamp: %s", body)
+	}
+	// The pulse element should be rendered with the heartbeat-pulse class.
+	if !strings.Contains(body, "heartbeat-pulse") {
+		t.Errorf("stats response missing pulse element with class 'heartbeat-pulse': %s", body)
 	}
 }
 

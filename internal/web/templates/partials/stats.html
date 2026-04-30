@@ -15,6 +15,10 @@
     <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 shadow-lg">
         <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Daemon Uptime</div>
         <div class="text-2xl font-bold text-slate-200">{{.Uptime}}</div>
+        <div class="flex items-center space-x-1.5 mt-2 text-xs text-slate-400">
+            <span class="heartbeat-pulse inline-block w-2 h-2 rounded-full bg-green-500"></span>
+            <span>Updated {{.LastUpdate}}</span>
+        </div>
     </div>
 
     <!-- Sparkline -->

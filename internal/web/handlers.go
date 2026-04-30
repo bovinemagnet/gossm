@@ -26,6 +26,7 @@ type DashboardData struct {
 	Port         int
 	SparkSVG     template.HTML
 	Presets      []config.SessionPreset
+	LastUpdate   string
 }
 
 // handleDashboard renders the full dashboard page.
@@ -276,6 +277,7 @@ func (s *Server) buildDashboardData() DashboardData {
 		Port:         s.cfg.DashboardPort,
 		SparkSVG:     template.HTML(renderSparkSVG(s.sm.SparkData())),
 		Presets:      s.cfg.Presets,
+		LastUpdate:   time.Now().Format("15:04:05"),
 	}
 }
 
