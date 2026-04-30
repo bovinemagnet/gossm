@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -556,6 +557,46 @@ func TestDashboardIncludesInstancePicker(t *testing.T) {
 	}
 	if !strings.Contains(body, "/api/instances") {
 		t.Error("dashboard does not contain /api/instances HTMX endpoint")
+	}
+}
+
+func TestSessionRowRendersProbeAndStalledStop(t *testing.T) {
+	sm := session.New(nil, nil)
+	defer sm.Close()
+
+	srv := NewServer(sm, &config.Config{}, time.Now(), nil)
+
+	// Build a port-forward session that's been probed and is in StateStalled.
+	s := session.Session{
+		ID:           "abc-123",
+		InstanceID:   "i-xyz",
+		InstanceName: "db",
+		Profile:      "prod",
+		Type:         session.TypePortForward,
+		State:        session.StateStalled,
+		LocalPort:    5432,
+		RemotePort:   5432,
+		RemoteHost:   "db.internal",
+		StartedAt:    time.Now().Add(-2 * time.Minute),
+		LastProbeAt:  time.Now().Add(-5 * time.Second),
+		LastProbeOK:  false,
+	}
+
+	var buf bytes.Buffer
+	if err := srv.tmpl.ExecuteTemplate(&buf, "session_row.html", s); err != nil {
+		t.Fatalf("execute template: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "Stalled") {
+		t.Errorf("rendered row missing 'Stalled' label: %s", out)
+	}
+	if !strings.Contains(out, "fail ") {
+		t.Errorf("rendered row missing probe 'fail ' indicator: %s", out)
+	}
+	// Stop button should be available while Stalled.
+	if !strings.Contains(out, `hx-delete="/api/sessions/abc-123"`) {
+		t.Errorf("rendered row missing Stop button while Stalled: %s", out)
 	}
 }
 
