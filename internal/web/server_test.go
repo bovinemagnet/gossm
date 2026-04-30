@@ -565,6 +565,7 @@ func TestSessionRowRendersProbeAndStalledStop(t *testing.T) {
 	defer sm.Close()
 
 	srv := NewServer(sm, &config.Config{}, time.Now(), nil)
+	defer srv.Stop()
 
 	// Build a port-forward session that's been probed and is in StateStalled.
 	s := session.Session{
