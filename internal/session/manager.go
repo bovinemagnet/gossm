@@ -45,14 +45,17 @@ func defaultTCPProber(ctx context.Context, s *Session) bool {
 
 // SessionManager is a goroutine-safe registry of active SSM sessions.
 type SessionManager struct {
-	mu           sync.RWMutex
-	sessions     map[string]*Session
-	OnChange     chan SessionEvent
-	buildCommand CommandBuilder
-	checkProcess ProcessChecker
-	sparkData    []int // ring buffer of active session counts, last 60 entries
-	sparkIndex   int
-	stopCh       chan struct{}
+	mu            sync.RWMutex
+	sessions      map[string]*Session
+	OnChange      chan SessionEvent
+	buildCommand  CommandBuilder
+	checkProcess  ProcessChecker
+	prober        Prober
+	probeInterval time.Duration
+	probeTimeout  time.Duration
+	sparkData     []int // ring buffer of active session counts, last 60 entries
+	sparkIndex    int
+	stopCh        chan struct{}
 }
 
 // New creates a SessionManager.  If builder is nil the default AWS CLI
@@ -63,12 +66,31 @@ func New(builder CommandBuilder, checker ProcessChecker) *SessionManager {
 		builder = defaultCommandBuilder
 	}
 	return &SessionManager{
-		sessions:     make(map[string]*Session),
-		OnChange:     make(chan SessionEvent, 64),
-		buildCommand: builder,
-		checkProcess: checker,
-		sparkData:    make([]int, 60),
-		stopCh:       make(chan struct{}),
+		sessions:      make(map[string]*Session),
+		OnChange:      make(chan SessionEvent, 64),
+		buildCommand:  builder,
+		checkProcess:  checker,
+		prober:        defaultTCPProber,
+		probeInterval: 30 * time.Second,
+		probeTimeout:  2 * time.Second,
+		sparkData:     make([]int, 60),
+		stopCh:        make(chan struct{}),
+	}
+}
+
+// SetProbe overrides the prober, probe interval, and per-probe timeout.
+// Pass interval=0 or timeout=0 to keep the existing values for those
+// individual knobs. Pass prober=nil to disable probing entirely.
+// Intended for tests and for higher layers wanting custom liveness checks.
+func (m *SessionManager) SetProbe(p Prober, interval, timeout time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.prober = p
+	if interval > 0 {
+		m.probeInterval = interval
+	}
+	if timeout > 0 {
+		m.probeTimeout = timeout
 	}
 }
 

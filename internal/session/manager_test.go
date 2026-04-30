@@ -470,3 +470,43 @@ func TestDefaultTCPProberFailsOnDeadPort(t *testing.T) {
 		t.Errorf("defaultTCPProber returned true for a closed port %d", port)
 	}
 }
+
+func TestSetProbeOverridesDefault(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	called := false
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		called = true
+		return true
+	}, 50*time.Millisecond, 100*time.Millisecond)
+
+	if sm.probeInterval != 50*time.Millisecond {
+		t.Errorf("probeInterval = %v, want 50ms", sm.probeInterval)
+	}
+	if sm.probeTimeout != 100*time.Millisecond {
+		t.Errorf("probeTimeout = %v, want 100ms", sm.probeTimeout)
+	}
+
+	if !sm.prober(context.Background(), &Session{}) {
+		t.Errorf("installed prober did not run")
+	}
+	if !called {
+		t.Errorf("installed prober was not invoked")
+	}
+}
+
+func TestNewInstallsDefaults(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	if sm.prober == nil {
+		t.Fatal("New should install a default prober")
+	}
+	if sm.probeInterval == 0 {
+		t.Fatal("New should install a non-zero probeInterval")
+	}
+	if sm.probeTimeout == 0 {
+		t.Fatal("New should install a non-zero probeTimeout")
+	}
+}
