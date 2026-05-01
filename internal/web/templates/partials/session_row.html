@@ -3,10 +3,25 @@
     <td class="px-6 py-3">
         <div class="flex items-center space-x-2">
             <span class="status-dot {{sessionStateClass .State}}"></span>
-            <span class="text-xs text-slate-400">{{sessionStateName .State}}</span>
+            <span class="text-xs text-slate-400">
+                {{sessionStateName .State}}{{if and (eq (sessionStateName .State) "Reconnecting") .Reconnectable}} ({{.ReconnectAttempts}}/{{reconnectMaxAttempts}}){{end}}
+            </span>
         </div>
         {{if eq (sessionTypeName .Type) "Port Forward"}}
         <div class="text-[10px] text-slate-500 mt-1">probe: {{sessionProbeDisplay .}}</div>
+        <form hx-post="/api/sessions/{{.ID}}/probe-interval"
+              hx-target="closest tr"
+              hx-swap="outerHTML"
+              hx-trigger="change from:find input"
+              class="mt-1">
+            <label class="text-[10px] text-slate-500">
+                interval:
+                <input type="number" name="interval" min="1" max="600"
+                       value="{{effectiveProbeSecs .}}"
+                       class="w-14 bg-slate-800 border border-slate-700 rounded px-1 py-0.5 text-[10px] text-slate-300">
+                s
+            </label>
+        </form>
         {{end}}
     </td>
     <td class="px-6 py-3 font-medium text-slate-200">{{.InstanceName}}</td>
@@ -21,18 +36,28 @@
     <td class="px-6 py-3 font-mono text-xs text-slate-400">{{portDisplay .}}</td>
     <td class="px-6 py-3 text-slate-400 text-xs">{{uptimeSince .StartedAt}}</td>
     <td class="px-6 py-3">
-        {{$state := sessionStateName .State}}
-        {{if or (eq $state "Running") (eq $state "Starting") (eq $state "Stalled")}}
-        <button hx-delete="/api/sessions/{{.ID}}"
-                hx-target="#session-table-body"
-                hx-swap="innerHTML"
-                hx-confirm="Stop this session?"
-                class="text-red-400 hover:text-red-300 text-xs font-medium transition-colors">
-            Stop
-        </button>
-        {{else}}
-        <span class="text-slate-600 text-xs">-</span>
-        {{end}}
+        <div class="flex items-center space-x-3">
+            {{if isActiveState .State}}
+            <button hx-delete="/api/sessions/{{.ID}}"
+                    hx-target="#session-table-body"
+                    hx-swap="innerHTML"
+                    hx-confirm="Stop this session?"
+                    class="text-red-400 hover:text-red-300 text-xs font-medium transition-colors">
+                Stop
+            </button>
+            {{end}}
+            {{if and .Reconnectable (or (eq (sessionStateName .State) "Stalled") (eq (sessionStateName .State) "Errored") (eq (sessionStateName .State) "Stopped") (eq (sessionStateName .State) "Reconnecting"))}}
+            <button hx-post="/api/sessions/{{.ID}}/reconnect"
+                    hx-target="#session-table-body"
+                    hx-swap="innerHTML"
+                    class="text-sky-400 hover:text-sky-300 text-xs font-medium transition-colors">
+                Reconnect
+            </button>
+            {{end}}
+            {{if and (not (isActiveState .State)) (not .Reconnectable)}}
+            <span class="text-slate-600 text-xs">-</span>
+            {{end}}
+        </div>
     </td>
 </tr>
 {{end}}

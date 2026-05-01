@@ -53,9 +53,17 @@ type SessionManager struct {
 	prober        Prober
 	probeInterval time.Duration
 	probeTimeout  time.Duration
-	sparkData     []int // ring buffer of active session counts, last 60 entries
-	sparkIndex    int
-	stopCh        chan struct{}
+
+	// Reconnect policy. Configured via SetReconnectPolicy.
+	reconnectFailureThreshold int           // consecutive probe failures before triggering reconnect
+	reconnectMaxAttempts      int           // give up after this many failed respawn attempts
+	reconnectBackoffInitial   time.Duration // first inter-attempt sleep
+	reconnectBackoffMax       time.Duration // upper bound on backoff sleep
+	sleep                     func(time.Duration)
+
+	sparkData  []int // ring buffer of active session counts, last 60 entries
+	sparkIndex int
+	stopCh     chan struct{}
 }
 
 // New creates a SessionManager.  If builder is nil the default AWS CLI
@@ -66,15 +74,49 @@ func New(builder CommandBuilder, checker ProcessChecker) *SessionManager {
 		builder = defaultCommandBuilder
 	}
 	return &SessionManager{
-		sessions:      make(map[string]*Session),
-		OnChange:      make(chan SessionEvent, 64),
-		buildCommand:  builder,
-		checkProcess:  checker,
-		prober:        defaultTCPProber,
-		probeInterval: 30 * time.Second,
-		probeTimeout:  2 * time.Second,
-		sparkData:     make([]int, 60),
-		stopCh:        make(chan struct{}),
+		sessions:                  make(map[string]*Session),
+		OnChange:                  make(chan SessionEvent, 64),
+		buildCommand:              builder,
+		checkProcess:              checker,
+		prober:                    defaultTCPProber,
+		probeInterval:             30 * time.Second,
+		probeTimeout:              2 * time.Second,
+		reconnectFailureThreshold: 1,
+		reconnectMaxAttempts:      5,
+		reconnectBackoffInitial:   5 * time.Second,
+		reconnectBackoffMax:       60 * time.Second,
+		sleep:                     time.Sleep,
+		sparkData:                 make([]int, 60),
+		stopCh:                    make(chan struct{}),
+	}
+}
+
+// SetReconnectPolicy overrides the reconnect parameters. Pass zero for any
+// value to keep the existing default for that knob.
+func (m *SessionManager) SetReconnectPolicy(failureThreshold, maxAttempts int, backoffInitial, backoffMax time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if failureThreshold > 0 {
+		m.reconnectFailureThreshold = failureThreshold
+	}
+	if maxAttempts > 0 {
+		m.reconnectMaxAttempts = maxAttempts
+	}
+	if backoffInitial > 0 {
+		m.reconnectBackoffInitial = backoffInitial
+	}
+	if backoffMax > 0 {
+		m.reconnectBackoffMax = backoffMax
+	}
+}
+
+// SetSleeper replaces the manager's sleep function. Intended for tests
+// so reconnect backoff sequences can be exercised deterministically.
+func (m *SessionManager) SetSleeper(s func(time.Duration)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s != nil {
+		m.sleep = s
 	}
 }
 
@@ -86,6 +128,20 @@ func (m *SessionManager) SetProbe(p Prober, interval, timeout time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.prober = p
+	if interval > 0 {
+		m.probeInterval = interval
+	}
+	if timeout > 0 {
+		m.probeTimeout = timeout
+	}
+}
+
+// SetProbeTimings updates the probe interval and timeout without
+// touching the installed prober. Pass zero for either value to keep
+// the existing default for that knob.
+func (m *SessionManager) SetProbeTimings(interval, timeout time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if interval > 0 {
 		m.probeInterval = interval
 	}
@@ -121,19 +177,20 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 	cmd := m.buildCommand(ctx, opts)
 
 	s := &Session{
-		ID:           id,
-		InstanceID:   opts.InstanceID,
-		InstanceName: opts.InstanceName,
-		Profile:      opts.Profile,
-		Type:         opts.Type,
-		State:        StateStarting,
-		LocalPort:    opts.LocalPort,
-		RemotePort:   opts.RemotePort,
-		RemoteHost:   opts.RemoteHost,
-		StartedAt:    time.Now(),
-		cmd:          cmd,
-		cancel:       cancel,
-		waitDone:     make(chan struct{}),
+		ID:            id,
+		InstanceID:    opts.InstanceID,
+		InstanceName:  opts.InstanceName,
+		Profile:       opts.Profile,
+		Type:          opts.Type,
+		State:         StateStarting,
+		LocalPort:     opts.LocalPort,
+		RemotePort:    opts.RemotePort,
+		RemoteHost:    opts.RemoteHost,
+		StartedAt:     time.Now(),
+		cmd:           cmd,
+		cancel:        cancel,
+		waitDone:      make(chan struct{}),
+		Reconnectable: opts.Type == TypePortForward,
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -151,7 +208,7 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 	m.emit(SessionEvent{Type: "added", SessionID: id, Timestamp: time.Now()})
 
 	// Monitor the subprocess in the background.
-	go m.monitor(s)
+	go m.monitor(s, cmd, s.waitDone)
 
 	// Probe the tunnel for liveness if this is a port-forward session.
 	if s.Type == TypePortForward {
@@ -162,20 +219,50 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 }
 
 // monitor waits for the subprocess to finish and updates state accordingly.
-func (m *SessionManager) monitor(s *Session) {
-	err := s.cmd.Wait()
-	close(s.waitDone)
+// cmd and waitDone are passed in so each monitor goroutine owns its own
+// subprocess: after a reconnect, the previous monitor closes its OWN
+// waitDone (not the new one) and exits without disturbing the new state.
+func (m *SessionManager) monitor(s *Session, cmd *exec.Cmd, waitDone chan struct{}) {
+	err := cmd.Wait()
+	close(waitDone)
 
 	m.mu.Lock()
-	if err != nil {
-		s.State = StateErrored
-		s.LastError = err.Error()
-	} else {
+	// If a reconnect cycle has already taken charge of this session, do
+	// not override the state it has set.
+	if s.State == StateReconnecting {
+		m.mu.Unlock()
+		return
+	}
+	// User asked us to stop — record that and we're done.
+	if s.State == StateStopping {
 		s.State = StateStopped
+		m.mu.Unlock()
+		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+		return
+	}
+	// For non-reconnectable sessions (shells, externally registered),
+	// preserve the original behaviour: terminal state on exit.
+	if !s.Reconnectable {
+		if err != nil {
+			s.State = StateErrored
+			s.LastError = err.Error()
+		} else {
+			s.State = StateStopped
+		}
+		m.mu.Unlock()
+		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+		return
+	}
+	// Reconnectable session, unexpected exit — flag stalled and ask the
+	// reconnect loop to take over.
+	s.State = StateStalled
+	if err != nil {
+		s.LastError = err.Error()
 	}
 	m.mu.Unlock()
-
 	m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+
+	m.triggerReconnect(s, false)
 }
 
 // monitorExternalPID polls the PID of an externally registered session
@@ -212,21 +299,26 @@ func (m *SessionManager) StopSession(id string) error {
 		return fmt.Errorf("session %s not found", id)
 	}
 	s.State = StateStopping
+	// Snapshot subprocess handles under the lock — these fields can be
+	// rewritten by runReconnectLoop during a reconnect cycle.
+	cancel := s.cancel
+	waitDone := s.waitDone
+	cmd := s.cmd
 	m.mu.Unlock()
 
 	// Signal the subprocess via context cancellation.
-	if s.cancel != nil {
-		s.cancel()
+	if cancel != nil {
+		cancel()
 	}
 
 	// Wait for the monitor goroutine to observe the exit, or kill after timeout.
-	if s.waitDone != nil {
+	if waitDone != nil {
 		select {
-		case <-s.waitDone:
+		case <-waitDone:
 			// exited cleanly
 		case <-time.After(5 * time.Second):
-			if s.cmd != nil && s.cmd.Process != nil {
-				_ = s.cmd.Process.Kill()
+			if cmd != nil && cmd.Process != nil {
+				_ = cmd.Process.Kill()
 			}
 		}
 	}
@@ -366,14 +458,17 @@ func (m *SessionManager) emit(e SessionEvent) {
 // Stalled → probe-succeeds edge it transitions back to Running. The
 // goroutine exits when the session leaves an active state, when stopCh
 // is closed, or when the prober is nil.
+//
+// The effective interval between probes is read fresh on every tick so
+// runtime per-session updates via SetSessionProbeInterval take effect
+// without restarting the goroutine.
 func (m *SessionManager) monitorProbe(s *Session) {
 	m.mu.RLock()
-	interval := m.probeInterval
-	timeout := m.probeTimeout
 	prober := m.prober
+	timeout := m.probeTimeout
 	m.mu.RUnlock()
 
-	if prober == nil || interval <= 0 {
+	if prober == nil {
 		return
 	}
 
@@ -383,19 +478,58 @@ func (m *SessionManager) monitorProbe(s *Session) {
 		return
 	}
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	for {
+		interval := m.effectiveProbeInterval(s)
+		if interval <= 0 {
+			return
+		}
+		t := time.NewTimer(interval)
 		select {
 		case <-m.stopCh:
+			t.Stop()
 			return
-		case <-ticker.C:
+		case <-t.C:
+			m.mu.RLock()
+			prober = m.prober
+			timeout = m.probeTimeout
+			m.mu.RUnlock()
+			if prober == nil {
+				return
+			}
 			if !m.runProbe(s, prober, timeout) {
 				return
 			}
 		}
 	}
+}
+
+// effectiveProbeInterval returns the per-session ProbeInterval if it's
+// set, otherwise the manager-wide default.
+func (m *SessionManager) effectiveProbeInterval(s *Session) time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if cur, ok := m.sessions[s.ID]; ok && cur.ProbeInterval > 0 {
+		return cur.ProbeInterval
+	}
+	return m.probeInterval
+}
+
+// EffectiveProbeInterval is the public view of effectiveProbeInterval.
+// The web layer uses it to render the current interval per row.
+func (m *SessionManager) EffectiveProbeInterval(id string) time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if cur, ok := m.sessions[id]; ok && cur.ProbeInterval > 0 {
+		return cur.ProbeInterval
+	}
+	return m.probeInterval
+}
+
+// DefaultProbeInterval returns the manager-wide probe interval default.
+func (m *SessionManager) DefaultProbeInterval() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.probeInterval
 }
 
 // runProbe executes a single probe against s and applies the result to
@@ -422,19 +556,223 @@ func (m *SessionManager) runProbe(s *Session, prober Prober, timeout time.Durati
 	cur.LastProbeOK = ok
 
 	stateChanged := false
+	shouldReconnect := false
 	switch {
 	case !ok && cur.State == StateRunning:
 		cur.State = StateStalled
+		cur.consecutiveFailures++
 		stateChanged = true
+		if cur.Reconnectable && cur.consecutiveFailures >= m.reconnectFailureThreshold {
+			shouldReconnect = true
+		}
+	case !ok && cur.State == StateStalled:
+		cur.consecutiveFailures++
+		if cur.Reconnectable && cur.consecutiveFailures >= m.reconnectFailureThreshold {
+			shouldReconnect = true
+		}
 	case ok && cur.State == StateStalled:
 		cur.State = StateRunning
+		cur.consecutiveFailures = 0
+		cur.ReconnectAttempts = 0
 		stateChanged = true
+	case ok && cur.State == StateRunning:
+		cur.consecutiveFailures = 0
+		cur.ReconnectAttempts = 0
 	}
 	m.mu.Unlock()
 
 	if stateChanged {
 		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
 	}
+	if shouldReconnect {
+		m.triggerReconnect(s, false)
+	}
 	return true
+}
+
+// triggerReconnect schedules a reconnect cycle for s. Only one cycle
+// runs at a time per session; concurrent triggers while a cycle is
+// already in flight are dropped (manual triggers reset the attempt
+// counter so they still take effect on the in-flight cycle).
+func (m *SessionManager) triggerReconnect(s *Session, manual bool) {
+	m.mu.Lock()
+	if !s.Reconnectable {
+		m.mu.Unlock()
+		return
+	}
+	if manual {
+		s.ReconnectAttempts = 0
+	}
+	if s.reconnectInFlight {
+		m.mu.Unlock()
+		return
+	}
+	s.reconnectInFlight = true
+	m.mu.Unlock()
+
+	go m.runReconnectLoop(s)
+}
+
+// runReconnectLoop keeps respawning the session's subprocess until it
+// either succeeds (state returns to StateRunning) or the configured
+// maximum number of attempts is exhausted (state becomes StateErrored).
+// Backoff between attempts doubles from the initial value to the
+// configured max.
+func (m *SessionManager) runReconnectLoop(s *Session) {
+	defer func() {
+		m.mu.Lock()
+		s.reconnectInFlight = false
+		m.mu.Unlock()
+	}()
+
+	for {
+		m.mu.Lock()
+		if s.State == StateStopping || s.State == StateStopped {
+			m.mu.Unlock()
+			return
+		}
+		if _, exists := m.sessions[s.ID]; !exists {
+			m.mu.Unlock()
+			return
+		}
+		attempt := s.ReconnectAttempts + 1
+		if attempt > m.reconnectMaxAttempts {
+			s.State = StateErrored
+			if s.LastError == "" {
+				s.LastError = fmt.Sprintf("reconnect exhausted after %d attempts", m.reconnectMaxAttempts)
+			}
+			m.mu.Unlock()
+			m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+			return
+		}
+		opts := optsFromSession(s)
+		oldCmd := s.cmd
+		oldCancel := s.cancel
+		oldWaitDone := s.waitDone
+		backoffInitial := m.reconnectBackoffInitial
+		backoffMax := m.reconnectBackoffMax
+		s.State = StateReconnecting
+		s.ReconnectAttempts = attempt
+		s.LastReconnectAt = time.Now()
+		m.mu.Unlock()
+		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+
+		// Stop the old subprocess if any. Wait briefly for the old
+		// monitor to clean up, but do not block forever.
+		if oldCancel != nil {
+			oldCancel()
+		}
+		if oldWaitDone != nil {
+			select {
+			case <-oldWaitDone:
+			case <-time.After(5 * time.Second):
+				if oldCmd != nil && oldCmd.Process != nil {
+					_ = oldCmd.Process.Kill()
+				}
+			}
+		}
+
+		// Build and start a fresh subprocess with the same opts.
+		ctx, cancel := context.WithCancel(context.Background())
+		newCmd := m.buildCommand(ctx, opts)
+		startErr := newCmd.Start()
+		if startErr != nil {
+			cancel()
+			m.mu.Lock()
+			s.LastError = fmt.Sprintf("reconnect attempt %d: %v", attempt, startErr)
+			m.mu.Unlock()
+			m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+
+			// Sleep with backoff, then loop.
+			m.sleep(reconnectBackoff(attempt, backoffInitial, backoffMax))
+			continue
+		}
+
+		// Success — install the new subprocess on the session.
+		newWaitDone := make(chan struct{})
+		m.mu.Lock()
+		s.cmd = newCmd
+		s.cancel = cancel
+		s.waitDone = newWaitDone
+		s.PID = newCmd.Process.Pid
+		s.State = StateRunning
+		s.consecutiveFailures = 0
+		// ReconnectAttempts is left non-zero until a successful probe
+		// confirms the tunnel is healthy; that lets us track repeated
+		// flapping and eventually give up if it keeps failing.
+		m.mu.Unlock()
+		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+
+		go m.monitor(s, newCmd, newWaitDone)
+		return
+	}
+}
+
+// reconnectBackoff returns the delay for the n-th reconnect attempt
+// (1-indexed). The sequence doubles from initial up to max.
+func reconnectBackoff(attempt int, initial, max time.Duration) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := initial
+	for i := 1; i < attempt; i++ {
+		d *= 2
+		if d >= max {
+			return max
+		}
+	}
+	if d > max {
+		return max
+	}
+	return d
+}
+
+// optsFromSession reconstructs the SessionOpts that drive the
+// command builder for a respawn. Caller must hold m.mu.
+func optsFromSession(s *Session) SessionOpts {
+	return SessionOpts{
+		InstanceID:   s.InstanceID,
+		InstanceName: s.InstanceName,
+		Profile:      s.Profile,
+		Type:         s.Type,
+		LocalPort:    s.LocalPort,
+		RemotePort:   s.RemotePort,
+		RemoteHost:   s.RemoteHost,
+	}
+}
+
+// ManualReconnect resets the attempt counter and triggers a reconnect
+// cycle for the named session. Returns an error if the session is
+// missing or not reconnectable.
+func (m *SessionManager) ManualReconnect(id string) error {
+	m.mu.RLock()
+	s, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", id)
+	}
+	if !s.Reconnectable {
+		return fmt.Errorf("session %s is not reconnectable", id)
+	}
+	m.triggerReconnect(s, true)
+	return nil
+}
+
+// SetSessionProbeInterval updates the per-session probe interval. The
+// new interval must be between 1 second and 10 minutes.
+func (m *SessionManager) SetSessionProbeInterval(id string, d time.Duration) error {
+	if d < time.Second || d > 10*time.Minute {
+		return fmt.Errorf("probe interval %s out of range (must be between 1s and 10m)", d)
+	}
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("session %s not found", id)
+	}
+	s.ProbeInterval = d
+	m.mu.Unlock()
+	m.emit(SessionEvent{Type: "updated", SessionID: id, Timestamp: time.Now()})
+	return nil
 }
 

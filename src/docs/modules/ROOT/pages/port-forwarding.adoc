@@ -155,13 +155,51 @@ can be stopped from the browser.
 
 == Tunnel liveness
 
-Port-forward sessions are probed every 30 seconds by the daemon. The probe opens a short TCP connection to `127.0.0.1:<local-port>` with a 2-second timeout and records the outcome on the session.
+Port-forward sessions are probed periodically by the daemon. The probe opens a short TCP connection to `127.0.0.1:<local-port>` with a configurable timeout and records the outcome on the session.
 
-The dashboard surfaces the result under the status cell as `probe: ok 12s ago` or `probe: fail 4s ago`. A run of failures flips the session into the *Stalled* state (amber dot) so you can tell at a glance that the tunnel is no longer carrying traffic, even when the local `session-manager-plugin` process is still running.
+The dashboard surfaces the result under the status cell as `probe: ok 12s ago` or `probe: fail 4s ago`. A run of consecutive failures (controlled by `GOSSM_RECONNECT_FAILURE_THRESHOLD`) first flips the session into the *Stalled* state (amber indicator) so you can tell at a glance that the tunnel is no longer carrying traffic, even when the local `session-manager-plugin` process is still running.
 
 The probe doubles as keepalive traffic: most networks will not idle-out a tunnel that sees a TCP connection every 30 seconds, so this also reduces the rate at which AWS Session Manager closes idle sessions.
 
-Stalled sessions can be stopped from the dashboard like any other session. Probing is not performed for shell sessions; their status cell shows `probe: —`.
+Probing is not performed for shell sessions; their status cell shows `probe: —`.
+
+=== Automatic reconnect
+
+When a daemon-managed port-forward session stalls or its `aws ssm start-session` subprocess exits unexpectedly, the daemon automatically respawns it. The reconnected session retains the same session ID, local port, remote port, remote host, profile, and target — only the underlying subprocess is replaced.
+
+The session moves through the *Reconnecting* state while respawn is in progress. The dashboard shows this as `Reconnecting (n/N)` where `n` is the current attempt number and `N` is the configured maximum.
+
+The backoff sequence with default settings is: 5 s → 10 s → 20 s → 40 s → 60 s.
+
+If all reconnect attempts are exhausted the session transitions to *Errored* and no further attempts are made. Errored sessions appear in the *Stopped Sessions* table on the dashboard (see <<dashboard-tables>>).
+
+=== Manual reconnect button
+
+Each reconnectable session in the dashboard has a *Reconnect* button that immediately triggers a fresh respawn, resetting the attempt counter. You can also adjust the per-session probe interval using the probe-interval input field (1–600 seconds); this overrides the daemon-wide `GOSSM_PROBE_INTERVAL` for that session only.
+
+NOTE: CLI-launched sessions that were registered with a running daemon (external sessions) are *not* reconnectable. The daemon does not own their subprocess and cannot safely respawn them. The Reconnect button does not appear for these sessions. Shell sessions are also not reconnectable as they are interactive.
+
+[[dashboard-tables]]
+=== Dashboard session tables
+
+The dashboard splits sessions into two tables:
+
+Active Sessions::
+Sessions in the *Starting*, *Running*, *Stopping*, *Stalled*, or *Reconnecting* state.
+These are sessions the daemon is actively managing or monitoring.
+
+Stopped Sessions::
+Sessions in the *Stopped* or *Errored* state.
+A session reaches *Errored* when all automatic reconnect attempts are exhausted.
+A session reaches *Stopped* when it is terminated by the user or shuts down cleanly.
+
+=== Probe and reconnect configuration
+
+All probe and reconnect settings are controlled by environment variables. See the
+xref:configuration.adoc[Configuration] page for the full reference, including
+`GOSSM_PROBE_INTERVAL`, `GOSSM_PROBE_TIMEOUT`, `GOSSM_RECONNECT_FAILURE_THRESHOLD`,
+`GOSSM_RECONNECT_MAX_ATTEMPTS`, `GOSSM_RECONNECT_BACKOFF_INITIAL`, and
+`GOSSM_RECONNECT_BACKOFF_MAX`.
 
 == Flags Reference
 
