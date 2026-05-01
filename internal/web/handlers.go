@@ -18,10 +18,27 @@ import (
 	"github.com/bovinemagnet/gossm/internal/session"
 )
 
+// DashboardStats summarises the active session population for the
+// metric cards on the dashboard.
+type DashboardStats struct {
+	Total        int
+	Active       int
+	Running      int
+	Starting     int
+	Stopping     int
+	Stalled      int
+	Reconnecting int
+	Errored      int
+	Stopped      int
+	Shells       int
+	PortForwards int
+}
+
 // DashboardData is the data passed to the dashboard template.
 type DashboardData struct {
 	ActiveSessions  []session.Session
 	StoppedSessions []session.Session
+	Stats           DashboardStats
 	SessionCount    int
 	Uptime          string
 	Port            int
@@ -41,6 +58,41 @@ func splitSessions(all []session.Session) (active, stopped []session.Session) {
 		}
 	}
 	return
+}
+
+// buildDashboardStats summarises a slice of sessions into the metric
+// counters used by the dashboard.
+func buildDashboardStats(sessions []session.Session) DashboardStats {
+	var stats DashboardStats
+	stats.Total = len(sessions)
+	for _, sess := range sessions {
+		if isActiveState(sess.State) {
+			stats.Active++
+		}
+		switch sess.State {
+		case session.StateRunning:
+			stats.Running++
+		case session.StateStarting:
+			stats.Starting++
+		case session.StateStopping:
+			stats.Stopping++
+		case session.StateStalled:
+			stats.Stalled++
+		case session.StateReconnecting:
+			stats.Reconnecting++
+		case session.StateErrored:
+			stats.Errored++
+		case session.StateStopped:
+			stats.Stopped++
+		}
+		switch sess.Type {
+		case session.TypeShell:
+			stats.Shells++
+		case session.TypePortForward:
+			stats.PortForwards++
+		}
+	}
+	return stats
 }
 
 // handleDashboard renders the full dashboard page.
@@ -205,7 +257,7 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 	profile := r.URL.Query().Get("profile")
 	if profile == "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `<div class="text-slate-500 p-4 text-sm">Enter an AWS profile above to browse instances.</div>`)
+		fmt.Fprint(w, `<div class="instance-picker-empty">Enter an AWS profile above to browse instances.</div>`)
 		return
 	}
 
@@ -362,11 +414,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildDashboardData assembles the template data for the dashboard.
+// ListSessions is called once and the resulting slice is reused for
+// stats and split lists.
 func (s *Server) buildDashboardData() DashboardData {
-	active, stopped := splitSessions(s.sm.ListSessions())
+	all := s.sm.ListSessions()
+	active, stopped := splitSessions(all)
 	return DashboardData{
 		ActiveSessions:  active,
 		StoppedSessions: stopped,
+		Stats:           buildDashboardStats(all),
 		SessionCount:    len(active),
 		Uptime:          uptimeSince(s.startedAt),
 		Port:            s.cfg.DashboardPort,
@@ -376,8 +432,9 @@ func (s *Server) buildDashboardData() DashboardData {
 	}
 }
 
-// renderSparkSVG generates an inline SVG polyline from sparkline data.
-// The SVG is 200px wide and 40px tall.
+// renderSparkSVG generates an inline SVG chart from sparkline data,
+// sized to fill the dashboard history panel. The SVG renders horizontal
+// grid lines, a soft area fill, and a polyline.
 func renderSparkSVG(data []int) string {
 	if len(data) == 0 {
 		return ""
@@ -393,56 +450,123 @@ func renderSparkSVG(data []int) string {
 		maxVal = 1
 	}
 
-	width := 200.0
-	height := 40.0
-	padding := 2.0
-	drawHeight := height - 2*padding
+	const (
+		width        = 880.0
+		height       = 132.0
+		padTop       = 10.0
+		padBottom    = 18.0
+		padLeft      = 6.0
+		padRight     = 6.0
+		gridLines    = 4
+	)
+	drawHeight := height - padTop - padBottom
+	drawWidth := width - padLeft - padRight
 
-	step := width / float64(len(data)-1)
+	step := drawWidth / float64(len(data)-1)
 	if len(data) == 1 {
 		step = 0
 	}
 
 	var points strings.Builder
+	var area strings.Builder
+	fmt.Fprintf(&area, "%.1f,%.1f ", padLeft, padTop+drawHeight)
 	for i, v := range data {
-		x := float64(i) * step
-		y := padding + drawHeight - (float64(v)/float64(maxVal))*drawHeight
+		x := padLeft + float64(i)*step
+		y := padTop + drawHeight - (float64(v)/float64(maxVal))*drawHeight
 		if math.IsNaN(y) {
-			y = padding + drawHeight
+			y = padTop + drawHeight
 		}
 		if i > 0 {
 			points.WriteString(" ")
 		}
 		fmt.Fprintf(&points, "%.1f,%.1f", x, y)
+		fmt.Fprintf(&area, "%.1f,%.1f ", x, y)
+	}
+	fmt.Fprintf(&area, "%.1f,%.1f", padLeft+float64(len(data)-1)*step, padTop+drawHeight)
+
+	var grid strings.Builder
+	for i := 0; i <= gridLines; i++ {
+		y := padTop + (drawHeight/float64(gridLines))*float64(i)
+		fmt.Fprintf(&grid,
+			`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#2b3a55" stroke-width="0.6" stroke-dasharray="2 4"/>`,
+			padLeft, y, padLeft+drawWidth, y)
 	}
 
 	return fmt.Sprintf(
-		`<svg width="200" height="40" viewBox="0 0 200 40" xmlns="http://www.w3.org/2000/svg">`+
-			`<polyline fill="none" stroke="#38bdf8" stroke-width="1.5" points="%s"/>`+
+		`<svg viewBox="0 0 %.0f %.0f" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Session history (last 60 minutes)">`+
+			`<defs><linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1">`+
+			`<stop offset="0%%" stop-color="#38bdf8" stop-opacity="0.45"/>`+
+			`<stop offset="100%%" stop-color="#38bdf8" stop-opacity="0"/>`+
+			`</linearGradient></defs>`+
+			`%s`+
+			`<polygon points="%s" fill="url(#spark-fill)" stroke="none"/>`+
+			`<polyline fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="%s"/>`+
+			`<text x="%.1f" y="%.1f" fill="#64748b" font-size="10" font-family="ui-monospace, Menlo, monospace">0</text>`+
+			`<text x="%.1f" y="%.1f" fill="#64748b" font-size="10" font-family="ui-monospace, Menlo, monospace" text-anchor="end">%d</text>`+
 			`</svg>`,
+		width, height,
+		grid.String(),
+		area.String(),
 		points.String(),
+		padLeft, padTop+drawHeight+12,
+		padLeft+drawWidth, padTop+drawHeight+12,
+		maxVal,
 	)
 }
 
-// sessionStateClass returns the Tailwind CSS colour class for a session state.
+// sessionStateClass returns the lowercase state slug used as a CSS
+// modifier on `.session-card--{slug}` and `.state-pill--{slug}`.
 func sessionStateClass(state session.SessionState) string {
 	switch state {
 	case session.StateRunning:
-		return "bg-green-500"
+		return "running"
 	case session.StateStarting:
-		return "bg-yellow-500"
+		return "starting"
 	case session.StateStopping:
-		return "bg-yellow-500"
+		return "stopping"
 	case session.StateStalled:
-		return "bg-amber-500"
+		return "stalled"
 	case session.StateReconnecting:
-		return "bg-sky-500"
+		return "reconnecting"
 	case session.StateErrored:
-		return "bg-red-500"
+		return "errored"
 	case session.StateStopped:
-		return "bg-slate-500"
+		return "stopped"
 	default:
-		return "bg-slate-500"
+		return "unknown"
+	}
+}
+
+// templateDict builds a map[string]any from key/value pairs so templates
+// can pass multiple named values to a partial via `{{template "x" (dict
+// "Key" value ...)}}`. An odd number of args, or a non-string key,
+// returns nil so the template is rendered without the partial blowing
+// up.
+func templateDict(values ...any) map[string]any {
+	if len(values)%2 != 0 {
+		return nil
+	}
+	d := make(map[string]any, len(values)/2)
+	for i := 0; i < len(values); i += 2 {
+		k, ok := values[i].(string)
+		if !ok {
+			return nil
+		}
+		d[k] = values[i+1]
+	}
+	return d
+}
+
+// sessionTypeClass returns the lowercase type slug used as a CSS
+// modifier (e.g. `.type-pill--port-forward`).
+func sessionTypeClass(t session.SessionType) string {
+	switch t {
+	case session.TypeShell:
+		return "shell"
+	case session.TypePortForward:
+		return "port-forward"
+	default:
+		return "unknown"
 	}
 }
 

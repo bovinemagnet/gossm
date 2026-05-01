@@ -1,0 +1,80 @@
+{{define "session_card.html"}}
+<article class="session-card session-card--{{sessionStateClass .State}}">
+    <div class="session-card-main">
+        <div class="session-card-head">
+            <span class="state-pill state-pill--{{sessionStateClass .State}}">
+                <span class="dot"></span>
+                {{sessionStateName .State}}{{if and (eq (sessionStateName .State) "Reconnecting") .Reconnectable}} {{.ReconnectAttempts}}/{{reconnectMaxAttempts}}{{end}}
+            </span>
+            <span class="type-pill type-pill--{{sessionTypeClass .Type}}">{{sessionTypeName .Type}}</span>
+            {{if .InstanceName}}<span class="session-card-name">{{.InstanceName}}</span>{{end}}
+            <span class="session-card-id mono">{{.InstanceID}}</span>
+        </div>
+
+        {{if eq (sessionTypeName .Type) "Port Forward"}}
+        <div class="session-card-route">
+            <span class="mono">localhost:{{.LocalPort}}</span>
+            <span class="arrow">→</span>
+            <span class="mono">{{if .RemoteHost}}{{.RemoteHost}}:{{end}}{{.RemotePort}}</span>
+        </div>
+        {{else}}
+        <div class="session-card-route session-card-route--shell">EC2 Instance Connect</div>
+        {{end}}
+
+        <div class="session-card-meta">
+            {{if .Profile}}<span><span class="meta-key">profile</span><span class="mono">{{.Profile}}</span></span>{{end}}
+            <span><span class="meta-key">uptime</span>{{uptimeSince .StartedAt}}</span>
+            {{if .PID}}<span><span class="meta-key">pid</span><span class="mono">{{.PID}}</span></span>{{end}}
+            {{if eq (sessionTypeName .Type) "Port Forward"}}
+            <span><span class="meta-key">probe</span>{{sessionProbeDisplay .}}</span>
+            {{end}}
+        </div>
+
+        {{if eq (sessionStateName .State) "Stalled"}}
+        <div class="session-card-warning">
+            Tunnel probe is failing. The daemon will attempt to reconnect automatically if reconnect is enabled for this session.
+        </div>
+        {{end}}
+
+        {{if .LastError}}
+        <div class="session-card-error" role="status">{{.LastError}}</div>
+        {{end}}
+    </div>
+
+    <div class="session-card-actions">
+        {{if isActiveState .State}}
+        <button type="button"
+                class="btn btn--danger btn--small"
+                hx-delete="/api/sessions/{{.ID}}"
+                hx-target="#session-list"
+                hx-swap="innerHTML"
+                hx-confirm="Stop this session?">
+            Stop
+        </button>
+        {{end}}
+        {{if and .Reconnectable (or (eq (sessionStateName .State) "Stalled") (eq (sessionStateName .State) "Errored") (eq (sessionStateName .State) "Stopped") (eq (sessionStateName .State) "Reconnecting"))}}
+        <button type="button"
+                class="btn btn--ghost btn--small"
+                hx-post="/api/sessions/{{.ID}}/reconnect"
+                hx-target="#session-list"
+                hx-swap="innerHTML">
+            Reconnect
+        </button>
+        {{end}}
+        {{if eq (sessionTypeName .Type) "Port Forward"}}
+        <form class="probe-form"
+              hx-post="/api/sessions/{{.ID}}/probe-interval"
+              hx-target="closest .session-card"
+              hx-swap="outerHTML"
+              hx-trigger="change from:find input">
+            <label>
+                probe
+                <input type="number" name="interval" min="1" max="600"
+                       value="{{effectiveProbeSecs .}}">
+                s
+            </label>
+        </form>
+        {{end}}
+    </div>
+</article>
+{{end}}

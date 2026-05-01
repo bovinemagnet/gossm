@@ -1,0 +1,72 @@
+{{define "manual_launch.html"}}
+<form id="launch-form"
+      class="manual-launch"
+      hx-post="/api/sessions"
+      hx-target="#session-list"
+      hx-swap="innerHTML">
+
+    <div class="form-grid">
+        <div class="form-field">
+            <label for="profile">AWS Profile</label>
+            <input type="text" id="profile" name="profile" list="profile-list"
+                   placeholder="default"
+                   class="mono"
+                   hx-get="/api/instances"
+                   hx-trigger="change, keyup changed delay:500ms"
+                   hx-target="#instance-picker"
+                   hx-include="#launch-form">
+            <datalist id="profile-list" hx-get="/api/profiles" hx-trigger="load" hx-swap="innerHTML"></datalist>
+        </div>
+        <div class="form-field">
+            <label for="filter">Filter by Name</label>
+            <input type="text" id="filter" name="filter"
+                   placeholder="web, api, db..."
+                   hx-get="/api/instances"
+                   hx-trigger="keyup changed delay:350ms"
+                   hx-target="#instance-picker"
+                   hx-include="#launch-form">
+        </div>
+    </div>
+
+    <div id="instance-picker" class="instance-picker">
+        <div class="instance-picker-empty">Enter an AWS profile above to browse instances.</div>
+    </div>
+
+    <div class="form-grid" style="margin-top:12px;">
+        <div class="form-field">
+            <label for="instance_id">Instance ID</label>
+            <input type="text" id="instance_id" name="instance_id" required readonly
+                   class="mono"
+                   placeholder="Select an instance above">
+        </div>
+        <div class="form-field">
+            <label for="instance_name">Instance Name</label>
+            <input type="text" id="instance_name" name="instance_name" readonly
+                   placeholder="Selected automatically">
+        </div>
+        <div class="form-field">
+            <label for="type">Mode</label>
+            <select id="type" name="type">
+                <option value="shell">Shell Session</option>
+                <option value="port-forward">Port Forward</option>
+            </select>
+        </div>
+        <div class="form-field">
+            <label for="local_port">Local Port <span class="form-help">(port-forward)</span></label>
+            <input type="number" id="local_port" name="local_port" placeholder="8080">
+        </div>
+        <div class="form-field">
+            <label for="remote_port">Remote Port <span class="form-help">(port-forward)</span></label>
+            <input type="number" id="remote_port" name="remote_port" placeholder="80">
+        </div>
+        <div class="form-field">
+            <label for="remote_host">Remote Host <span class="form-help">(port-forward, optional)</span></label>
+            <input type="text" id="remote_host" name="remote_host" placeholder="localhost">
+        </div>
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn--primary">Start Session</button>
+    </div>
+</form>
+{{end}}

@@ -39,10 +39,12 @@ func NewServer(sm *session.SessionManager, cfg *config.Config, startedAt time.Ti
 		"sessionStateClass":   sessionStateClass,
 		"sessionStateName":    sessionStateName,
 		"sessionTypeName":     sessionTypeName,
+		"sessionTypeClass":    sessionTypeClass,
 		"portDisplay":         portDisplay,
 		"sessionProbeDisplay": sessionProbeDisplay,
 		"uptimeSince":         uptimeSince,
 		"isActiveState":       isActiveState,
+		"dict":                templateDict,
 		"effectiveProbeSecs": func(s session.Session) int {
 			d := s.ProbeInterval
 			if d <= 0 {
@@ -62,8 +64,11 @@ func NewServer(sm *session.SessionManager, cfg *config.Config, startedAt time.Ti
 			"templates/dashboard.html",
 			"templates/partials/session_list.html",
 			"templates/partials/session_row.html",
+			"templates/partials/session_card.html",
 			"templates/partials/stats.html",
 			"templates/partials/instance_picker.html",
+			"templates/partials/preset_card.html",
+			"templates/partials/manual_launch.html",
 		),
 	)
 

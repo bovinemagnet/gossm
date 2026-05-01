@@ -1,1 +1,1 @@
-{{define "session_list.html"}}{{if .}}{{range .}}{{template "session_row.html" .}}{{end}}{{else}}<tr><td colspan="8" class="px-6 py-8 text-center text-slate-500">No sessions.</td></tr>{{end}}{{end}}
+{{define "session_list.html"}}{{if .}}<div class="session-list">{{range .}}{{template "session_card.html" .}}{{end}}</div>{{else}}<div class="empty-state"><h3>No active sessions</h3><p>Start a saved session from the launchpad, or create a manual shell or port-forward session.</p></div>{{end}}{{end}}

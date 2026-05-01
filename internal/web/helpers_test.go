@@ -15,12 +15,13 @@ func TestSessionStateClass(t *testing.T) {
 		state session.SessionState
 		want  string
 	}{
-		{session.StateRunning, "bg-green-500"},
-		{session.StateStarting, "bg-yellow-500"},
-		{session.StateStopping, "bg-yellow-500"},
-		{session.StateErrored, "bg-red-500"},
-		{session.StateStopped, "bg-slate-500"},
-		{session.SessionState(99), "bg-slate-500"}, // unknown
+		{session.StateRunning, "running"},
+		{session.StateStarting, "starting"},
+		{session.StateStopping, "stopping"},
+		{session.StateReconnecting, "reconnecting"},
+		{session.StateErrored, "errored"},
+		{session.StateStopped, "stopped"},
+		{session.SessionState(99), "unknown"},
 	}
 	for _, tc := range tests {
 		got := sessionStateClass(tc.state)
@@ -189,8 +190,106 @@ func TestRenderSparkSVG_AllZeros(t *testing.T) {
 
 func TestSessionStateClassStalled(t *testing.T) {
 	got := sessionStateClass(session.StateStalled)
-	if got != "bg-amber-500" {
-		t.Errorf("sessionStateClass(StateStalled) = %q, want %q", got, "bg-amber-500")
+	if got != "stalled" {
+		t.Errorf("sessionStateClass(StateStalled) = %q, want %q", got, "stalled")
+	}
+}
+
+func TestSessionTypeClass(t *testing.T) {
+	tests := []struct {
+		typ  session.SessionType
+		want string
+	}{
+		{session.TypeShell, "shell"},
+		{session.TypePortForward, "port-forward"},
+		{session.SessionType(99), "unknown"},
+	}
+	for _, tc := range tests {
+		got := sessionTypeClass(tc.typ)
+		if got != tc.want {
+			t.Errorf("sessionTypeClass(%v) = %q, want %q", tc.typ, got, tc.want)
+		}
+	}
+}
+
+// --- buildDashboardStats tests ---
+
+func TestBuildDashboardStats_Empty(t *testing.T) {
+	got := buildDashboardStats(nil)
+	if got.Total != 0 || got.Active != 0 || got.Running != 0 ||
+		got.Shells != 0 || got.PortForwards != 0 {
+		t.Errorf("expected zero stats, got %+v", got)
+	}
+}
+
+func TestBuildDashboardStats_CountsByStateAndType(t *testing.T) {
+	sessions := []session.Session{
+		{State: session.StateRunning, Type: session.TypeShell},
+		{State: session.StateRunning, Type: session.TypePortForward},
+		{State: session.StateStarting, Type: session.TypeShell},
+		{State: session.StateStalled, Type: session.TypePortForward},
+		{State: session.StateReconnecting, Type: session.TypePortForward},
+		{State: session.StateStopping, Type: session.TypeShell},
+		{State: session.StateErrored, Type: session.TypePortForward},
+		{State: session.StateStopped, Type: session.TypeShell},
+	}
+
+	got := buildDashboardStats(sessions)
+
+	if got.Total != 8 {
+		t.Errorf("Total = %d, want 8", got.Total)
+	}
+	if got.Running != 2 {
+		t.Errorf("Running = %d, want 2", got.Running)
+	}
+	if got.Starting != 1 {
+		t.Errorf("Starting = %d, want 1", got.Starting)
+	}
+	if got.Stopping != 1 {
+		t.Errorf("Stopping = %d, want 1", got.Stopping)
+	}
+	if got.Stalled != 1 {
+		t.Errorf("Stalled = %d, want 1", got.Stalled)
+	}
+	if got.Reconnecting != 1 {
+		t.Errorf("Reconnecting = %d, want 1", got.Reconnecting)
+	}
+	if got.Errored != 1 {
+		t.Errorf("Errored = %d, want 1", got.Errored)
+	}
+	if got.Stopped != 1 {
+		t.Errorf("Stopped = %d, want 1", got.Stopped)
+	}
+	// Active = Running + Starting + Stopping + Stalled + Reconnecting = 6
+	if got.Active != 6 {
+		t.Errorf("Active = %d, want 6", got.Active)
+	}
+	if got.Shells != 4 {
+		t.Errorf("Shells = %d, want 4", got.Shells)
+	}
+	if got.PortForwards != 4 {
+		t.Errorf("PortForwards = %d, want 4", got.PortForwards)
+	}
+}
+
+// --- templateDict tests ---
+
+func TestTemplateDict_Pairs(t *testing.T) {
+	got := templateDict("Index", 3, "Preset", "alpha")
+	if got["Index"] != 3 || got["Preset"] != "alpha" {
+		t.Errorf("dict = %+v, want Index=3 Preset=alpha", got)
+	}
+}
+
+func TestTemplateDict_OddArgsReturnsNil(t *testing.T) {
+	if got := templateDict("a", 1, "b"); got != nil {
+		t.Errorf("dict with odd args = %+v, want nil", got)
+	}
+}
+
+func TestTemplateDict_NonStringKeyReturnsNil(t *testing.T) {
+	if got := templateDict(1, "x"); got != nil {
+		t.Errorf("dict with non-string key = %+v, want nil", got)
 	}
 }
 
