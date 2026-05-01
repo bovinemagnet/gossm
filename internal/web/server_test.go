@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os/exec"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +23,35 @@ import (
 	"github.com/bovinemagnet/gossm/internal/config"
 	"github.com/bovinemagnet/gossm/internal/session"
 )
+
+// testServerWithSleep builds a Server backed by a session manager that
+// spawns harmless `sleep 3600` subprocesses, so reconnect logic can be
+// exercised without invoking the AWS CLI. Returns the server and the
+// underlying manager so tests can drive sessions directly.
+func testServerWithSleep(t *testing.T) (*Server, *session.SessionManager, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	builder := func(ctx context.Context, opts session.SessionOpts) *exec.Cmd {
+		calls.Add(1)
+		return exec.CommandContext(ctx, "sleep", "3600")
+	}
+	sm := session.New(builder, nil)
+	sm.SetReconnectPolicy(1, 5, 5*time.Millisecond, 20*time.Millisecond)
+	sm.SetSleeper(func(time.Duration) {})
+	sm.SetProbe(nil, 0, 0)
+	cfg := &config.Config{
+		DashboardPort: 8877,
+		LogLevel:      "warn",
+		PIDDir:        t.TempDir(),
+		ProbeInterval: 30 * time.Second,
+	}
+	s := NewServer(sm, cfg, time.Now(), nil)
+	t.Cleanup(func() {
+		sm.Close()
+		s.Stop()
+	})
+	return s, sm, &calls
+}
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
@@ -628,6 +660,171 @@ func TestStatsRendersHeartbeat(t *testing.T) {
 	// The pulse element should be rendered with the heartbeat-pulse class.
 	if !strings.Contains(body, "heartbeat-pulse") {
 		t.Errorf("stats response missing pulse element with class 'heartbeat-pulse': %s", body)
+	}
+}
+
+// --- Reconnect & probe-interval handler tests ---
+
+func TestReconnectHandler_TriggersBuilder(t *testing.T) {
+	srv, sm, calls := testServerWithSleep(t)
+
+	id, err := sm.StartSession(session.SessionOpts{
+		InstanceID: "i-recon",
+		Type:       session.TypePortForward,
+		LocalPort:  19990,
+		RemotePort: 19990,
+		RemoteHost: "host",
+	})
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	// Initial spawn registered.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && calls.Load() < 1 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls.Load() < 1 {
+		t.Fatalf("initial builder call never occurred")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/reconnect", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && calls.Load() < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if calls.Load() < 2 {
+		t.Errorf("builder calls = %d, want >= 2 after manual reconnect", calls.Load())
+	}
+}
+
+func TestReconnectHandler_RejectsExternal(t *testing.T) {
+	srv, sm, _ := testServerWithSleep(t)
+
+	id := sm.RegisterExternal(session.SessionOpts{
+		InstanceID: "i-ext",
+		Type:       session.TypePortForward,
+		LocalPort:  19991,
+	}, 99999)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/reconnect", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (external session is not reconnectable)", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestReconnectHandler_MissingSession(t *testing.T) {
+	srv, _, _ := testServerWithSleep(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/no-such-id/reconnect", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestProbeIntervalHandler_UpdatesSession(t *testing.T) {
+	srv, sm, _ := testServerWithSleep(t)
+
+	id, err := sm.StartSession(session.SessionOpts{
+		InstanceID: "i-int",
+		Type:       session.TypePortForward,
+		LocalPort:  19992,
+		RemotePort: 19992,
+	})
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("interval", "15")
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/probe-interval", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	if got := sm.EffectiveProbeInterval(id); got != 15*time.Second {
+		t.Errorf("EffectiveProbeInterval = %v, want 15s", got)
+	}
+}
+
+func TestProbeIntervalHandler_RejectsOutOfRange(t *testing.T) {
+	srv, sm, _ := testServerWithSleep(t)
+
+	id, err := sm.StartSession(session.SessionOpts{
+		InstanceID: "i-bad",
+		Type:       session.TypePortForward,
+		LocalPort:  19993,
+		RemotePort: 19993,
+	})
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	cases := []string{"0", "-5", "601"}
+	for _, v := range cases {
+		t.Run(v, func(t *testing.T) {
+			form := url.Values{}
+			form.Set("interval", v)
+			req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+id+"/probe-interval", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("interval=%s status = %d, want %d", v, w.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestSessionRowRendersReconnectingState(t *testing.T) {
+	sm := session.New(nil, nil)
+	defer sm.Close()
+	srv := NewServer(sm, &config.Config{
+		ProbeInterval:        30 * time.Second,
+		ReconnectMaxAttempts: 5,
+	}, time.Now(), nil)
+	defer srv.Stop()
+
+	s := session.Session{
+		ID:                "rec-1",
+		InstanceID:        "i-zzz",
+		InstanceName:      "tunnel",
+		Type:              session.TypePortForward,
+		State:             session.StateReconnecting,
+		LocalPort:         5000,
+		RemotePort:        5000,
+		RemoteHost:        "h",
+		StartedAt:         time.Now().Add(-time.Minute),
+		Reconnectable:     true,
+		ReconnectAttempts: 2,
+	}
+
+	var buf bytes.Buffer
+	if err := srv.tmpl.ExecuteTemplate(&buf, "session_row.html", s); err != nil {
+		t.Fatalf("execute template: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Reconnecting") {
+		t.Errorf("rendered row missing 'Reconnecting' label: %s", out)
+	}
+	if !strings.Contains(out, "2/5") {
+		t.Errorf("rendered row missing attempt indicator '2/5': %s", out)
 	}
 }
 

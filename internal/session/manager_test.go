@@ -434,6 +434,18 @@ func TestStateStalledDistinct(t *testing.T) {
 	}
 }
 
+func TestStateReconnectingDistinct(t *testing.T) {
+	values := []SessionState{
+		StateStarting, StateRunning, StateStopping, StateStalled,
+		StateStopped, StateErrored,
+	}
+	for _, v := range values {
+		if StateReconnecting == v {
+			t.Fatalf("StateReconnecting collides with state value %d", v)
+		}
+	}
+}
+
 func TestDefaultTCPProberSucceedsOnLiveListener(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -564,6 +576,10 @@ func TestProbeFailureTransitionsToStalled(t *testing.T) {
 	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
 
+	// Disable reconnect so the test observes the Running→Stalled edge
+	// without it being immediately consumed by a respawn.
+	sm.SetReconnectPolicy(1<<30, 1, time.Second, time.Second)
+
 	var fail atomic.Bool
 	sm.SetProbe(func(ctx context.Context, s *Session) bool {
 		return !fail.Load()
@@ -589,6 +605,9 @@ func TestProbeFailureTransitionsToStalled(t *testing.T) {
 func TestProbeRecoveryTransitionsBackToRunning(t *testing.T) {
 	sm := New(sleepBuilder(), nil)
 	defer sm.Close()
+
+	// Disable reconnect so the probe loop drives state transitions on its own.
+	sm.SetReconnectPolicy(1<<30, 1, time.Second, time.Second)
 
 	var fail atomic.Bool
 	sm.SetProbe(func(ctx context.Context, s *Session) bool {

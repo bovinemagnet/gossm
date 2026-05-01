@@ -42,6 +42,18 @@ func NewServer(sm *session.SessionManager, cfg *config.Config, startedAt time.Ti
 		"portDisplay":         portDisplay,
 		"sessionProbeDisplay": sessionProbeDisplay,
 		"uptimeSince":         uptimeSince,
+		"isActiveState":       isActiveState,
+		"effectiveProbeSecs": func(s session.Session) int {
+			d := s.ProbeInterval
+			if d <= 0 {
+				d = sm.DefaultProbeInterval()
+			}
+			if d <= 0 {
+				return 30
+			}
+			return int(d / time.Second)
+		},
+		"reconnectMaxAttempts": func() int { return cfg.ReconnectMaxAttempts },
 	}
 
 	tmpl := template.Must(
@@ -91,6 +103,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
 	s.mux.HandleFunc("POST /api/sessions", s.handleStartSession)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleStopSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/reconnect", s.handleReconnectSession)
+	s.mux.HandleFunc("POST /api/sessions/{id}/probe-interval", s.handleSetProbeInterval)
 	s.mux.HandleFunc("GET /api/instances", s.handleInstances)
 	s.mux.HandleFunc("GET /api/profiles", s.handleProfiles)
 

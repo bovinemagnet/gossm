@@ -51,6 +51,33 @@ Lower levels include all messages from higher levels (i.e. `debug` includes `inf
 |Directory where gossm writes the PID file (`gossm.pid`) and Unix domain socket (`gossm.sock`).
 The directory is created automatically if it does not exist.
 |`~/.gossm`
+
+|`GOSSM_PROBE_INTERVAL`
+|How often the daemon probes each active port-forward tunnel by opening a short TCP connection to
+the local port. Accepts Go duration syntax (e.g. `30s`, `1m`).
+|`30s`
+
+|`GOSSM_PROBE_TIMEOUT`
+|Timeout for each TCP probe dial.
+|`2s`
+
+|`GOSSM_RECONNECT_FAILURE_THRESHOLD`
+|Number of consecutive failed probes before the daemon triggers an automatic reconnect.
+|`1`
+
+|`GOSSM_RECONNECT_MAX_ATTEMPTS`
+|Maximum number of respawn attempts before giving up and moving the session to the *Errored* state.
+|`5`
+
+|`GOSSM_RECONNECT_BACKOFF_INITIAL`
+|Initial backoff duration between reconnect attempts. The backoff doubles after each attempt up to
+the cap set by `GOSSM_RECONNECT_BACKOFF_MAX`. Accepts Go duration syntax.
+|`5s`
+
+|`GOSSM_RECONNECT_BACKOFF_MAX`
+|Maximum backoff duration between reconnect attempts. The doubling backoff is capped at this value.
+Accepts Go duration syntax.
+|`60s`
 |===
 
 === Example ~/.gossm/config
@@ -60,6 +87,14 @@ The directory is created automatically if it does not exist.
 GOSSM_PORT=8877
 GOSSM_LOG_LEVEL=warn
 GOSSM_PID_DIR=/home/myuser/.gossm
+
+# Optional: tune port-forward tunnel probing and auto-reconnect behaviour
+# GOSSM_PROBE_INTERVAL=30s
+# GOSSM_PROBE_TIMEOUT=2s
+# GOSSM_RECONNECT_FAILURE_THRESHOLD=1
+# GOSSM_RECONNECT_MAX_ATTEMPTS=5
+# GOSSM_RECONNECT_BACKOFF_INITIAL=5s
+# GOSSM_RECONNECT_BACKOFF_MAX=60s
 ----
 
 === Example .env (project-level)

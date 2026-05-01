@@ -67,6 +67,15 @@ func Start(cfg *config.Config) (*Daemon, error) {
 	}
 
 	sm := session.New(nil, isProcessAlive)
+	// Apply probe and reconnect knobs from the loaded config so the
+	// daemon honours .env / env-var overrides.
+	sm.SetProbeTimings(cfg.ProbeInterval, cfg.ProbeTimeout)
+	sm.SetReconnectPolicy(
+		cfg.ReconnectFailureThreshold,
+		cfg.ReconnectMaxAttempts,
+		cfg.ReconnectBackoffInitial,
+		cfg.ReconnectBackoffMax,
+	)
 
 	d := &Daemon{
 		cfg:       cfg,

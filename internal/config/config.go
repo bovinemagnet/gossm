@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // SessionPreset defines a saved session that can be started from the dashboard.
@@ -28,6 +29,16 @@ type Config struct {
 	LogLevel      string
 	PIDDir        string
 
+	// Tunnel liveness probe knobs.
+	ProbeInterval time.Duration
+	ProbeTimeout  time.Duration
+
+	// Reconnect policy for daemon-managed port-forward sessions.
+	ReconnectFailureThreshold int
+	ReconnectMaxAttempts      int
+	ReconnectBackoffInitial   time.Duration
+	ReconnectBackoffMax       time.Duration
+
 	// Saved session presets loaded from config files.
 	Presets []SessionPreset
 }
@@ -36,9 +47,15 @@ type Config struct {
 func DefaultConfig() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
-		DashboardPort: 8877,
-		LogLevel:      "warn",
-		PIDDir:        filepath.Join(home, ".gossm"),
+		DashboardPort:             8877,
+		LogLevel:                  "warn",
+		PIDDir:                    filepath.Join(home, ".gossm"),
+		ProbeInterval:             30 * time.Second,
+		ProbeTimeout:              2 * time.Second,
+		ReconnectFailureThreshold: 1,
+		ReconnectMaxAttempts:      5,
+		ReconnectBackoffInitial:   5 * time.Second,
+		ReconnectBackoffMax:       60 * time.Second,
 	}
 }
 
@@ -99,6 +116,30 @@ func applyKeyValue(key, value string, cfg *Config) {
 		cfg.LogLevel = value
 	case "GOSSM_PID_DIR":
 		cfg.PIDDir = value
+	case "GOSSM_PROBE_INTERVAL":
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			cfg.ProbeInterval = d
+		}
+	case "GOSSM_PROBE_TIMEOUT":
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			cfg.ProbeTimeout = d
+		}
+	case "GOSSM_RECONNECT_FAILURE_THRESHOLD":
+		if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			cfg.ReconnectFailureThreshold = n
+		}
+	case "GOSSM_RECONNECT_MAX_ATTEMPTS":
+		if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			cfg.ReconnectMaxAttempts = n
+		}
+	case "GOSSM_RECONNECT_BACKOFF_INITIAL":
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			cfg.ReconnectBackoffInitial = d
+		}
+	case "GOSSM_RECONNECT_BACKOFF_MAX":
+		if d, err := time.ParseDuration(value); err == nil && d > 0 {
+			cfg.ReconnectBackoffMax = d
+		}
 	default:
 		// Handle session presets: GOSSM_SESSION_<N>_<FIELD>=value
 		applyPresetKey(key, value, cfg)
@@ -164,6 +205,36 @@ func applyEnv(cfg *Config) {
 		},
 		"GOSSM_PID_DIR": func(v string) {
 			cfg.PIDDir = v
+		},
+		"GOSSM_PROBE_INTERVAL": func(v string) {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				cfg.ProbeInterval = d
+			}
+		},
+		"GOSSM_PROBE_TIMEOUT": func(v string) {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				cfg.ProbeTimeout = d
+			}
+		},
+		"GOSSM_RECONNECT_FAILURE_THRESHOLD": func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.ReconnectFailureThreshold = n
+			}
+		},
+		"GOSSM_RECONNECT_MAX_ATTEMPTS": func(v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				cfg.ReconnectMaxAttempts = n
+			}
+		},
+		"GOSSM_RECONNECT_BACKOFF_INITIAL": func(v string) {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				cfg.ReconnectBackoffInitial = d
+			}
+		},
+		"GOSSM_RECONNECT_BACKOFF_MAX": func(v string) {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				cfg.ReconnectBackoffMax = d
+			}
 		},
 	}
 

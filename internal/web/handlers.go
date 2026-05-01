@@ -20,13 +20,27 @@ import (
 
 // DashboardData is the data passed to the dashboard template.
 type DashboardData struct {
-	Sessions     []session.Session
-	SessionCount int
-	Uptime       string
-	Port         int
-	SparkSVG     template.HTML
-	Presets      []config.SessionPreset
-	LastUpdate   string
+	ActiveSessions  []session.Session
+	StoppedSessions []session.Session
+	SessionCount    int
+	Uptime          string
+	Port            int
+	SparkSVG        template.HTML
+	Presets         []config.SessionPreset
+	LastUpdate      string
+}
+
+// splitSessions separates a session slice into active (live or
+// recovering) and stopped (terminal) lists.
+func splitSessions(all []session.Session) (active, stopped []session.Session) {
+	for _, s := range all {
+		if isActiveState(s.State) {
+			active = append(active, s)
+		} else {
+			stopped = append(stopped, s)
+		}
+	}
+	return
 }
 
 // handleDashboard renders the full dashboard page.
@@ -52,11 +66,16 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSessionsList renders the session list partial.
+// handleSessionsList renders the session list partial. By default it
+// returns active sessions. Pass ?stopped=1 for the stopped/errored list.
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
-	sessions := s.sm.ListSessions()
+	active, stopped := splitSessions(s.sm.ListSessions())
+	list := active
+	if r != nil && r.URL.Query().Get("stopped") == "1" {
+		list = stopped
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, "session_list.html", sessions); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "session_list.html", list); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -112,6 +131,72 @@ func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
 
 	// Return the updated session list.
 	s.handleSessionsList(w, r)
+}
+
+// handleReconnectSession kicks off a manual reconnect cycle for a
+// daemon-managed port-forward session.
+func (s *Server) handleReconnectSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := s.sm.GetSession(id); !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.sm.ManualReconnect(id); err != nil {
+		// Most often: session is not reconnectable (externally registered).
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.handleSessionsList(w, r)
+}
+
+// handleSetProbeInterval updates the per-session probe interval. The
+// interval form value is in seconds (1-600).
+func (s *Server) handleSetProbeInterval(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing session id", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	intervalSec, err := strconv.Atoi(r.FormValue("interval"))
+	if err != nil {
+		http.Error(w, "invalid interval", http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := s.sm.GetSession(id); !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.sm.SetSessionProbeInterval(id, time.Duration(intervalSec)*time.Second); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Return the updated session row.
+	cur, ok := s.sm.GetSession(id)
+	if !ok {
+		// Disappeared between calls — just return the full list.
+		s.handleSessionsList(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "session_row.html", *cur); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // handleInstances queries EC2 for running instances and returns the instance
@@ -247,12 +332,20 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Render the session list partial.
-			var sessionsBuf bytes.Buffer
-			sessions := s.sm.ListSessions()
-			if err := s.tmpl.ExecuteTemplate(&sessionsBuf, "session_list.html", sessions); err == nil {
-				fmt.Fprintf(w, "event: sessions\ndata: %s\n\n",
-					strings.ReplaceAll(sessionsBuf.String(), "\n", "\ndata: "))
+			active, stopped := splitSessions(s.sm.ListSessions())
+
+			// Render the active session list partial.
+			var activeBuf bytes.Buffer
+			if err := s.tmpl.ExecuteTemplate(&activeBuf, "session_list.html", active); err == nil {
+				fmt.Fprintf(w, "event: active-sessions\ndata: %s\n\n",
+					strings.ReplaceAll(activeBuf.String(), "\n", "\ndata: "))
+			}
+
+			// Render the stopped session list partial.
+			var stoppedBuf bytes.Buffer
+			if err := s.tmpl.ExecuteTemplate(&stoppedBuf, "session_list.html", stopped); err == nil {
+				fmt.Fprintf(w, "event: stopped-sessions\ndata: %s\n\n",
+					strings.ReplaceAll(stoppedBuf.String(), "\n", "\ndata: "))
 			}
 
 			// Render the stats partial.
@@ -270,14 +363,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 // buildDashboardData assembles the template data for the dashboard.
 func (s *Server) buildDashboardData() DashboardData {
+	active, stopped := splitSessions(s.sm.ListSessions())
 	return DashboardData{
-		Sessions:     s.sm.ListSessions(),
-		SessionCount: s.sm.SessionCount(),
-		Uptime:       uptimeSince(s.startedAt),
-		Port:         s.cfg.DashboardPort,
-		SparkSVG:     template.HTML(renderSparkSVG(s.sm.SparkData())),
-		Presets:      s.cfg.Presets,
-		LastUpdate:   time.Now().Format("15:04:05"),
+		ActiveSessions:  active,
+		StoppedSessions: stopped,
+		SessionCount:    len(active),
+		Uptime:          uptimeSince(s.startedAt),
+		Port:            s.cfg.DashboardPort,
+		SparkSVG:        template.HTML(renderSparkSVG(s.sm.SparkData())),
+		Presets:         s.cfg.Presets,
+		LastUpdate:      time.Now().Format("15:04:05"),
 	}
 }
 
@@ -340,6 +435,8 @@ func sessionStateClass(state session.SessionState) string {
 		return "bg-yellow-500"
 	case session.StateStalled:
 		return "bg-amber-500"
+	case session.StateReconnecting:
+		return "bg-sky-500"
 	case session.StateErrored:
 		return "bg-red-500"
 	case session.StateStopped:
@@ -360,6 +457,8 @@ func sessionStateName(state session.SessionState) string {
 		return "Stopping"
 	case session.StateStalled:
 		return "Stalled"
+	case session.StateReconnecting:
+		return "Reconnecting"
 	case session.StateErrored:
 		return "Errored"
 	case session.StateStopped:
@@ -367,6 +466,17 @@ func sessionStateName(state session.SessionState) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// isActiveState returns true for states that represent a live or
+// recovering session (i.e. not Stopped/Errored).
+func isActiveState(state session.SessionState) bool {
+	switch state {
+	case session.StateStarting, session.StateRunning, session.StateStopping,
+		session.StateStalled, session.StateReconnecting:
+		return true
+	}
+	return false
 }
 
 // sessionTypeName returns a human-readable label for a session type.

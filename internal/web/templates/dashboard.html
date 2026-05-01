@@ -5,10 +5,10 @@
         {{template "stats.html" .}}
     </div>
 
-    <!-- Session table -->
+    <!-- Active sessions table -->
     <div id="sessions-section" class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
         <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-slate-200">Sessions</h2>
+            <h2 class="text-lg font-semibold text-slate-200">Active Sessions</h2>
             <button
                 hx-get="/api/sessions"
                 hx-target="#session-table-body"
@@ -31,9 +31,42 @@
                         <th class="px-6 py-3 font-medium">Actions</th>
                     </tr>
                 </thead>
-                <tbody id="session-table-body" sse-swap="sessions" hx-swap="innerHTML"
+                <tbody id="session-table-body" sse-swap="active-sessions" hx-swap="innerHTML"
                        hx-get="/api/sessions" hx-trigger="every 5s">
-                    {{template "session_list.html" .Sessions}}
+                    {{template "session_list.html" .ActiveSessions}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Stopped sessions table -->
+    <div id="stopped-sessions-section" class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
+        <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-slate-200">Stopped Sessions</h2>
+            <button
+                hx-get="/api/sessions?stopped=1"
+                hx-target="#stopped-session-table-body"
+                hx-swap="innerHTML"
+                class="text-sm text-sky-400 hover:text-sky-300 transition-colors">
+                Refresh
+            </button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-slate-400 border-b border-slate-700">
+                        <th class="px-6 py-3 font-medium">Status</th>
+                        <th class="px-6 py-3 font-medium">Instance Name</th>
+                        <th class="px-6 py-3 font-medium">Instance ID</th>
+                        <th class="px-6 py-3 font-medium">Profile</th>
+                        <th class="px-6 py-3 font-medium">Type</th>
+                        <th class="px-6 py-3 font-medium">Ports</th>
+                        <th class="px-6 py-3 font-medium">Uptime</th>
+                        <th class="px-6 py-3 font-medium">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="stopped-session-table-body" sse-swap="stopped-sessions" hx-swap="innerHTML">
+                    {{template "session_list.html" .StoppedSessions}}
                 </tbody>
             </table>
         </div>

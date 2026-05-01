@@ -5,7 +5,101 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestDefaultConfig_ProbeAndReconnectDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.ProbeInterval != 30*time.Second {
+		t.Errorf("ProbeInterval = %v, want 30s", cfg.ProbeInterval)
+	}
+	if cfg.ProbeTimeout != 2*time.Second {
+		t.Errorf("ProbeTimeout = %v, want 2s", cfg.ProbeTimeout)
+	}
+	if cfg.ReconnectFailureThreshold != 1 {
+		t.Errorf("ReconnectFailureThreshold = %d, want 1", cfg.ReconnectFailureThreshold)
+	}
+	if cfg.ReconnectMaxAttempts != 5 {
+		t.Errorf("ReconnectMaxAttempts = %d, want 5", cfg.ReconnectMaxAttempts)
+	}
+	if cfg.ReconnectBackoffInitial != 5*time.Second {
+		t.Errorf("ReconnectBackoffInitial = %v, want 5s", cfg.ReconnectBackoffInitial)
+	}
+	if cfg.ReconnectBackoffMax != 60*time.Second {
+		t.Errorf("ReconnectBackoffMax = %v, want 60s", cfg.ReconnectBackoffMax)
+	}
+}
+
+func TestLoadKeyValueFile_ProbeAndReconnect(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config")
+
+	content := `GOSSM_PROBE_INTERVAL=15s
+GOSSM_PROBE_TIMEOUT=500ms
+GOSSM_RECONNECT_FAILURE_THRESHOLD=3
+GOSSM_RECONNECT_MAX_ATTEMPTS=8
+GOSSM_RECONNECT_BACKOFF_INITIAL=2s
+GOSSM_RECONNECT_BACKOFF_MAX=2m
+`
+	if err := os.WriteFile(cfgFile, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DefaultConfig()
+	loadKeyValueFile(cfgFile, cfg)
+
+	if cfg.ProbeInterval != 15*time.Second {
+		t.Errorf("ProbeInterval = %v, want 15s", cfg.ProbeInterval)
+	}
+	if cfg.ProbeTimeout != 500*time.Millisecond {
+		t.Errorf("ProbeTimeout = %v, want 500ms", cfg.ProbeTimeout)
+	}
+	if cfg.ReconnectFailureThreshold != 3 {
+		t.Errorf("ReconnectFailureThreshold = %d, want 3", cfg.ReconnectFailureThreshold)
+	}
+	if cfg.ReconnectMaxAttempts != 8 {
+		t.Errorf("ReconnectMaxAttempts = %d, want 8", cfg.ReconnectMaxAttempts)
+	}
+	if cfg.ReconnectBackoffInitial != 2*time.Second {
+		t.Errorf("ReconnectBackoffInitial = %v, want 2s", cfg.ReconnectBackoffInitial)
+	}
+	if cfg.ReconnectBackoffMax != 2*time.Minute {
+		t.Errorf("ReconnectBackoffMax = %v, want 2m", cfg.ReconnectBackoffMax)
+	}
+}
+
+func TestLoadKeyValueFile_InvalidDurationIgnored(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config")
+
+	content := "GOSSM_PROBE_INTERVAL=not-a-duration\n"
+	if err := os.WriteFile(cfgFile, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DefaultConfig()
+	loadKeyValueFile(cfgFile, cfg)
+
+	if cfg.ProbeInterval != 30*time.Second {
+		t.Errorf("ProbeInterval = %v, want 30s (default preserved on invalid input)", cfg.ProbeInterval)
+	}
+}
+
+func TestApplyEnv_ProbeAndReconnect(t *testing.T) {
+	t.Setenv("GOSSM_PROBE_INTERVAL", "10s")
+	t.Setenv("GOSSM_RECONNECT_MAX_ATTEMPTS", "7")
+
+	cfg := DefaultConfig()
+	applyEnv(cfg)
+
+	if cfg.ProbeInterval != 10*time.Second {
+		t.Errorf("ProbeInterval = %v, want 10s", cfg.ProbeInterval)
+	}
+	if cfg.ReconnectMaxAttempts != 7 {
+		t.Errorf("ReconnectMaxAttempts = %d, want 7", cfg.ReconnectMaxAttempts)
+	}
+}
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
