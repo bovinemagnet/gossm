@@ -1,0 +1,33 @@
+{{define "preset_card.html"}}
+<article class="preset-card">
+    <div>
+        <div class="preset-card-name">{{if .Preset.Name}}{{.Preset.Name}}{{else}}Preset {{.Index}}{{end}}</div>
+        <div class="preset-card-meta">
+            <span class="mono">{{.Preset.Profile}}</span>
+            <span class="sep">·</span>
+            {{if eq .Preset.SessionType "port-forward"}}
+            <span class="type-pill type-pill--port-forward">Port Forward</span>
+            {{else}}
+            <span class="type-pill">Shell</span>
+            {{end}}
+            {{if .Preset.InstanceName}}
+            <span class="sep">·</span>
+            <span>{{.Preset.InstanceName}}</span>
+            {{else if .Preset.InstanceID}}
+            <span class="sep">·</span>
+            <span class="mono">{{.Preset.InstanceID}}</span>
+            {{end}}
+        </div>
+        {{if eq .Preset.SessionType "port-forward"}}
+        <div class="preset-card-route">localhost:{{.Preset.LocalPort}} → {{if .Preset.RemoteHost}}{{.Preset.RemoteHost}}:{{end}}{{.Preset.RemotePort}}</div>
+        {{end}}
+    </div>
+    <button type="button"
+            class="btn btn--primary btn--small"
+            hx-post="/api/presets/{{.Index}}/start"
+            hx-target="#session-list"
+            hx-swap="innerHTML">
+        Start
+    </button>
+</article>
+{{end}}

@@ -1,30 +1,55 @@
 {{define "stats.html"}}
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-    <!-- Active sessions -->
-    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 shadow-lg">
-        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Active Sessions</div>
-        <div class="flex items-center space-x-2">
-            <span class="text-2xl font-bold text-sky-400">{{.SessionCount}}</span>
-            {{if gt .SessionCount 0}}
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-900 text-green-300">live</span>
-            {{end}}
+<section id="stats"
+         hx-get="/api/stats"
+         hx-trigger="every 5s"
+         hx-swap="outerHTML"
+         sse-swap="stats">
+    <div class="metric-grid">
+        <div class="metric-card is-accent">
+            <div class="label"><span class="marker-dot"></span>Active</div>
+            <div class="value">{{.Stats.Active}}</div>
+            <div class="sublabel">{{.Stats.Active}} of {{.Stats.Total}} total</div>
+        </div>
+        <div class="metric-card is-good">
+            <div class="label"><span class="marker-dot"></span>Running</div>
+            <div class="value">{{.Stats.Running}}</div>
+            <div class="sublabel">live SSM sessions</div>
+        </div>
+        <div class="metric-card">
+            <div class="label"><span class="marker-dot"></span>Starting</div>
+            <div class="value">{{.Stats.Starting}}</div>
+            <div class="sublabel">awaiting handshake</div>
+        </div>
+        <div class="metric-card{{if gt .Stats.Stalled 0}} is-warn{{end}}">
+            <div class="label"><span class="marker-dot"></span>Stalled</div>
+            <div class="value">{{.Stats.Stalled}}</div>
+            <div class="sublabel">probe failing</div>
+        </div>
+        <div class="metric-card is-tunnel">
+            <div class="label"><span class="marker-dot"></span>Tunnels</div>
+            <div class="value">{{.Stats.PortForwards}}</div>
+            <div class="sublabel">port-forward sessions</div>
+        </div>
+        <div class="metric-card is-shell">
+            <div class="label"><span class="marker-dot"></span>Shells</div>
+            <div class="value">{{.Stats.Shells}}</div>
+            <div class="sublabel">interactive shells</div>
+        </div>
+        <div class="metric-card">
+            <div class="label">Uptime</div>
+            <div class="value mono">{{.Uptime}}</div>
+            <div class="sublabel"><span class="heartbeat-pulse"></span> Updated {{.LastUpdate}}</div>
         </div>
     </div>
 
-    <!-- Uptime -->
-    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 shadow-lg">
-        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Daemon Uptime</div>
-        <div class="text-2xl font-bold text-slate-200">{{.Uptime}}</div>
-        <div class="flex items-center space-x-1.5 mt-2 text-xs text-slate-400">
-            <span class="heartbeat-pulse inline-block w-2 h-2 rounded-full bg-green-500"></span>
-            <span>Updated {{.LastUpdate}}</span>
+    <div class="history-panel">
+        <header>
+            <h2>Session History</h2>
+            <span class="subtitle">last 60m · live</span>
+        </header>
+        <div class="history-chart">
+            {{if .SparkSVG}}{{.SparkSVG}}{{else}}<div class="form-help" style="margin:auto;">No history yet — start a session to populate this chart.</div>{{end}}
         </div>
     </div>
-
-    <!-- Sparkline -->
-    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 shadow-lg">
-        <div class="text-xs text-slate-400 uppercase tracking-wider mb-1">Session History</div>
-        <div class="mt-1">{{.SparkSVG}}</div>
-    </div>
-</div>
+</section>
 {{end}}

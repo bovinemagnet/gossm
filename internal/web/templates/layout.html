@@ -1,40 +1,19 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>gossm — Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>gossm — SSM Control Deck</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
     <script src="/static/htmx.min.js"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
-    <style>
-        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-        @keyframes heartbeat-pulse-anim {
-            0%   { transform: scale(1);    opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-            70%  { transform: scale(1.6);  opacity: 0.6; box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
-            100% { transform: scale(1);    opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
-        }
-        .heartbeat-pulse { animation: heartbeat-pulse-anim 1s ease-out 1; }
-    </style>
 </head>
-<body class="bg-slate-900 text-slate-200 min-h-screen">
-    <!-- Header -->
-    <header class="bg-slate-800 border-b border-slate-700 shadow-lg">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <h1 class="text-xl font-bold text-sky-400 tracking-tight">gossm</h1>
-                <span class="text-xs text-slate-500 bg-slate-700 px-2 py-0.5 rounded">dashboard</span>
-            </div>
-            <div class="text-sm text-slate-400">
-                Port <span class="text-slate-300 font-mono">{{.Port}}</span>
-            </div>
-        </div>
-    </header>
-
-    <!-- Main content -->
-    <main class="max-w-7xl mx-auto px-4 py-6" hx-ext="sse" sse-connect="/events">
+<body>
+    <div class="app-shell" hx-ext="sse" sse-connect="/events">
         {{block "content" .}}{{end}}
-    </main>
+    </div>
 </body>
 </html>

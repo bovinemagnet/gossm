@@ -1,212 +1,127 @@
 {{define "content"}}
-    <!-- Stats bar -->
-    <div id="stats-bar" sse-swap="stats" hx-swap="innerHTML"
-         hx-get="/api/stats" hx-trigger="every 5s">
+<aside class="sidebar" aria-label="Primary navigation">
+    <div class="sidebar-brand">
+        <span class="logo">gs</span>
+        <div>
+            <div class="brand">gossm</div>
+            <div class="tagline">SSM control deck</div>
+        </div>
+    </div>
+
+    <div class="sidebar-section">Workspace</div>
+    <ul class="sidebar-nav">
+        <li><a href="#dashboard" class="active"><span class="marker"></span>Dashboard</a></li>
+        <li><a href="#active-sessions"><span class="marker"></span>Sessions</a></li>
+        <li><a href="#launchpad"><span class="marker"></span>Presets</a></li>
+        <li><a href="#manual-launch"><span class="marker"></span>Profiles</a></li>
+        <li><a href="#stopped-sessions"><span class="marker"></span>History</a></li>
+    </ul>
+
+    <div class="sidebar-section">Help</div>
+    <ul class="sidebar-nav">
+        <li><a href="https://github.com/bovinemagnet/gossm" target="_blank" rel="noopener noreferrer"><span class="marker"></span>Documentation</a></li>
+    </ul>
+
+    <div class="sidebar-foot">
+        Server-rendered with htmx. No SPA, no bundler — just HTML over the wire.
+    </div>
+</aside>
+
+<main class="main-shell" id="dashboard">
+    <header class="topbar" role="banner">
+        <div class="topbar-title">
+            <strong>gossm</strong>
+            <span class="sep">/</span>
+            <span>SSM Dashboard</span>
+        </div>
+        <div class="topbar-spacer"></div>
+        <div class="topbar-meta">
+            <span class="daemon-status" title="Daemon online">
+                <span class="dot" aria-hidden="true"></span>
+                daemon online
+            </span>
+            <span class="meta-item">
+                <span class="meta-key">port</span>
+                <span class="mono">localhost:{{.Port}}</span>
+            </span>
+            <span class="meta-item">
+                <span class="meta-key">updated</span>
+                <span class="mono">{{.LastUpdate}}</span>
+            </span>
+            <button class="btn btn--ghost btn--small"
+                    type="button"
+                    hx-get="/api/sessions"
+                    hx-target="#session-list"
+                    hx-swap="innerHTML"
+                    title="Refresh active sessions">
+                Refresh
+            </button>
+        </div>
+    </header>
+
+    <div class="main-content">
         {{template "stats.html" .}}
-    </div>
 
-    <!-- Active sessions table -->
-    <div id="sessions-section" class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
-        <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-slate-200">Active Sessions</h2>
-            <button
-                hx-get="/api/sessions"
-                hx-target="#session-table-body"
-                hx-swap="innerHTML"
-                class="text-sm text-sky-400 hover:text-sky-300 transition-colors">
-                Refresh
-            </button>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-                <thead>
-                    <tr class="text-left text-slate-400 border-b border-slate-700">
-                        <th class="px-6 py-3 font-medium">Status</th>
-                        <th class="px-6 py-3 font-medium">Instance Name</th>
-                        <th class="px-6 py-3 font-medium">Instance ID</th>
-                        <th class="px-6 py-3 font-medium">Profile</th>
-                        <th class="px-6 py-3 font-medium">Type</th>
-                        <th class="px-6 py-3 font-medium">Ports</th>
-                        <th class="px-6 py-3 font-medium">Uptime</th>
-                        <th class="px-6 py-3 font-medium">Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="session-table-body" sse-swap="active-sessions" hx-swap="innerHTML"
-                       hx-get="/api/sessions" hx-trigger="every 5s">
-                    {{template "session_list.html" .ActiveSessions}}
-                </tbody>
-            </table>
-        </div>
-    </div>
+        <div class="dashboard-grid">
+            <section class="panel" id="active-sessions" aria-labelledby="active-sessions-title">
+                <header class="panel-header">
+                    <h2 id="active-sessions-title">Active Sessions</h2>
+                    <span class="subtitle">live · auto-refresh every 3s</span>
+                </header>
+                <div class="panel-body">
+                    <div id="session-list"
+                         hx-get="/api/sessions"
+                         hx-trigger="every 3s"
+                         hx-swap="innerHTML"
+                         sse-swap="active-sessions">
+                        {{template "session_list.html" .ActiveSessions}}
+                    </div>
+                </div>
+            </section>
 
-    <!-- Stopped sessions table -->
-    <div id="stopped-sessions-section" class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
-        <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-slate-200">Stopped Sessions</h2>
-            <button
-                hx-get="/api/sessions?stopped=1"
-                hx-target="#stopped-session-table-body"
-                hx-swap="innerHTML"
-                class="text-sm text-sky-400 hover:text-sky-300 transition-colors">
-                Refresh
-            </button>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-                <thead>
-                    <tr class="text-left text-slate-400 border-b border-slate-700">
-                        <th class="px-6 py-3 font-medium">Status</th>
-                        <th class="px-6 py-3 font-medium">Instance Name</th>
-                        <th class="px-6 py-3 font-medium">Instance ID</th>
-                        <th class="px-6 py-3 font-medium">Profile</th>
-                        <th class="px-6 py-3 font-medium">Type</th>
-                        <th class="px-6 py-3 font-medium">Ports</th>
-                        <th class="px-6 py-3 font-medium">Uptime</th>
-                        <th class="px-6 py-3 font-medium">Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="stopped-session-table-body" sse-swap="stopped-sessions" hx-swap="innerHTML">
-                    {{template "session_list.html" .StoppedSessions}}
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    {{if .Presets}}
-    <!-- Saved session presets -->
-    <div id="presets-section" class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
-        <div class="px-6 py-4 border-b border-slate-700">
-            <h2 class="text-lg font-semibold text-slate-200">Saved Sessions</h2>
-        </div>
-        <div class="px-6 py-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {{range $i, $p := .Presets}}
-            <div class="bg-slate-750 border border-slate-600 rounded-lg p-4 flex items-center justify-between hover:border-sky-500 transition-colors">
-                <div>
-                    <div class="font-medium text-slate-200">{{if $p.Name}}{{$p.Name}}{{else}}Preset {{$i}}{{end}}</div>
-                    <div class="text-xs text-slate-400 mt-1">
-                        {{$p.InstanceName}}
-                        <span class="text-slate-500">{{$p.Profile}}</span>
-                        {{if eq $p.SessionType "port-forward"}}
-                        <span class="text-emerald-400">:{{$p.LocalPort}}→{{$p.RemotePort}}</span>
-                        {{else}}
-                        <span class="text-indigo-400">shell</span>
+            <aside class="panel launchpad" id="launchpad" aria-labelledby="launchpad-title">
+                <header class="panel-header">
+                    <h2 id="launchpad-title">Launchpad</h2>
+                    <span class="subtitle">presets &amp; manual</span>
+                </header>
+                {{if .Presets}}
+                <div class="panel-body panel-section">
+                    <h3 class="panel-section-title">Saved Sessions</h3>
+                    <div class="preset-grid">
+                        {{range $i, $p := .Presets}}
+                        {{template "preset_card.html" (dict "Index" $i "Preset" $p)}}
                         {{end}}
                     </div>
                 </div>
-                <button hx-post="/api/presets/{{$i}}/start"
-                        hx-target="#session-table-body"
-                        hx-swap="innerHTML"
-                        class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium px-3 py-1.5 rounded transition-colors">
-                    Start
-                </button>
-            </div>
-            {{end}}
+                {{end}}
+                <div class="panel-body panel-section" id="manual-launch">
+                    <h3 class="panel-section-title">Manual Launch</h3>
+                    {{template "manual_launch.html" .}}
+                </div>
+            </aside>
         </div>
-    </div>
-    {{end}}
 
-    <!-- New session form -->
-    <div class="bg-slate-800 rounded-lg border border-slate-700 shadow-lg mt-6">
-        <div class="px-6 py-4 border-b border-slate-700">
-            <h2 class="text-lg font-semibold text-slate-200">Start New Session</h2>
-        </div>
-        <form id="new-session-form" hx-post="/api/sessions"
-              hx-target="#session-table-body"
-              hx-swap="innerHTML"
-              class="px-6 py-4">
-
-            <!-- Row 1: Profile, filter, and instance picker -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- AWS Profile -->
-                <div>
-                    <label for="profile" class="block text-sm font-medium text-slate-400 mb-1">AWS Profile</label>
-                    <input type="text" name="profile" id="profile" list="profile-list"
-                           placeholder="default"
-                           hx-get="/api/instances"
-                           hx-trigger="change, keyup changed delay:500ms"
-                           hx-target="#instance-picker"
-                           hx-include="#filter"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                    <datalist id="profile-list" hx-get="/api/profiles" hx-trigger="load" hx-swap="innerHTML"></datalist>
-                </div>
-
-                <!-- Name Filter -->
-                <div>
-                    <label for="filter" class="block text-sm font-medium text-slate-400 mb-1">Filter by Name</label>
-                    <input type="text" name="filter" id="filter"
-                           placeholder="web, api..."
-                           hx-get="/api/instances"
-                           hx-trigger="keyup changed delay:500ms"
-                           hx-target="#instance-picker"
-                           hx-include="#profile"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                </div>
-            </div>
-
-            <!-- Instance picker (populated by HTMX) -->
-            <div id="instance-picker" class="mt-4">
-                <div class="text-slate-500 p-4 text-sm">Enter an AWS profile above to browse instances.</div>
-            </div>
-
-            <!-- Row 2: Selected instance (read-only) and session options -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
-                <!-- Instance ID (populated by picker click) -->
-                <div>
-                    <label for="instance_id" class="block text-sm font-medium text-slate-400 mb-1">Instance ID</label>
-                    <input type="text" name="instance_id" id="instance_id" required readonly
-                           placeholder="Select an instance above"
-                           class="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 text-sm cursor-not-allowed">
-                </div>
-
-                <!-- Instance Name (populated by picker click) -->
-                <div>
-                    <label for="instance_name" class="block text-sm font-medium text-slate-400 mb-1">Instance Name</label>
-                    <input type="text" name="instance_name" id="instance_name" readonly
-                           placeholder="Selected automatically"
-                           class="w-full bg-slate-900 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 text-sm cursor-not-allowed">
-                </div>
-
-                <!-- Session Type -->
-                <div>
-                    <label for="type" class="block text-sm font-medium text-slate-400 mb-1">Type</label>
-                    <select name="type" id="type"
-                            class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                        <option value="shell">Shell</option>
-                        <option value="port-forward">Port Forward</option>
-                    </select>
-                </div>
-
-                <!-- Local Port -->
-                <div>
-                    <label for="local_port" class="block text-sm font-medium text-slate-400 mb-1">Local Port</label>
-                    <input type="number" name="local_port" id="local_port"
-                           placeholder="8080"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                </div>
-
-                <!-- Remote Port -->
-                <div>
-                    <label for="remote_port" class="block text-sm font-medium text-slate-400 mb-1">Remote Port</label>
-                    <input type="number" name="remote_port" id="remote_port"
-                           placeholder="80"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                </div>
-
-                <!-- Remote Host -->
-                <div>
-                    <label for="remote_host" class="block text-sm font-medium text-slate-400 mb-1">Remote Host</label>
-                    <input type="text" name="remote_host" id="remote_host"
-                           placeholder="localhost"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-md px-3 py-2 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm">
-                </div>
-            </div>
-
-            <div class="mt-4 flex justify-end">
-                <button type="submit"
-                        class="bg-sky-600 hover:bg-sky-500 text-white font-medium px-4 py-2 rounded-md text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 focus:ring-offset-slate-800">
-                    Start Session
+        {{if .StoppedSessions}}
+        <section class="panel stopped-section" id="stopped-sessions" aria-labelledby="stopped-sessions-title">
+            <header class="panel-header">
+                <h2 id="stopped-sessions-title">Recent Stopped &amp; Errored</h2>
+                <button class="btn btn--ghost btn--small"
+                        type="button"
+                        hx-get="/api/sessions?stopped=1"
+                        hx-target="#stopped-session-list"
+                        hx-swap="innerHTML">
+                    Refresh
                 </button>
+            </header>
+            <div class="panel-body">
+                <div id="stopped-session-list"
+                     sse-swap="stopped-sessions"
+                     hx-swap="innerHTML">
+                    {{template "session_list.html" .StoppedSessions}}
+                </div>
             </div>
-        </form>
+        </section>
+        {{end}}
     </div>
+</main>
 {{end}}
