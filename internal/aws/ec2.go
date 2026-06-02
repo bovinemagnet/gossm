@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -233,5 +234,45 @@ func LaunchSession(opts LaunchOpts) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	// While the session runs, the AWS session-manager-plugin takes over the
+	// terminal (raw mode) and forwards keystrokes such as Ctrl-C to the
+	// remote shell. Divert those terminal signals away from gossm so that,
+	// for example, a Ctrl-C interrupts the command running on the remote
+	// machine rather than killing gossm and tearing down the whole session.
+	restore := ignoreSignals(terminalSignals())
+	defer restore()
+
 	return cmd.Run()
+}
+
+// ignoreSignals diverts the given signals away from gossm for the duration of
+// a child SSM session and returns a function that restores their default
+// disposition. Diverted signals are drained and discarded so the AWS plugin,
+// which owns the terminal while the session is live, can handle them. The
+// returned restore function is safe to call exactly once.
+func ignoreSignals(sigs []os.Signal) func() {
+	if len(sigs) == 0 {
+		return func() {}
+	}
+
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, sigs...)
+	done := make(chan struct{})
+
+	go func() {
+		for {
+			select {
+			case <-ch:
+				// Swallow: leave terminal handling to the plugin.
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		signal.Stop(ch)
+		close(done)
+	}
 }

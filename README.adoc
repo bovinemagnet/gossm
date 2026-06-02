@@ -238,4 +238,4 @@ NOTE: Check the steps to ensure they match your environment.
 
 gossm uses https://goreleaser.com[GoReleaser] for cross-platform builds (Linux, macOS, Windows on amd64 and arm64). Version is set via ldflags at build time.
 
-IMPORTANT: Pressing Ctrl-Z will suspend the gossm process, not the process on the remote machine.
+NOTE: While a session is running, gossm diverts terminal signals (Ctrl-C, Ctrl-\, and Ctrl-Z) to the remote shell rather than acting on them locally, so pressing Ctrl-C interrupts the command running on the remote machine instead of tearing down the session.
