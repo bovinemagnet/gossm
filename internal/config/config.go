@@ -26,6 +26,7 @@ type SessionPreset struct {
 // Config holds the application configuration.
 type Config struct {
 	DashboardPort int
+	BindAddress   string
 	LogLevel      string
 	PIDDir        string
 
@@ -48,6 +49,7 @@ func DefaultConfig() *Config {
 	home, _ := os.UserHomeDir()
 	return &Config{
 		DashboardPort:             8877,
+		BindAddress:               "127.0.0.1",
 		LogLevel:                  "warn",
 		PIDDir:                    filepath.Join(home, ".gossm"),
 		ProbeInterval:             30 * time.Second,
@@ -111,6 +113,10 @@ func applyKeyValue(key, value string, cfg *Config) {
 	case "GOSSM_PORT":
 		if port, err := strconv.Atoi(value); err == nil {
 			cfg.DashboardPort = port
+		}
+	case "GOSSM_BIND":
+		if value != "" {
+			cfg.BindAddress = value
 		}
 	case "GOSSM_LOG_LEVEL":
 		cfg.LogLevel = value
@@ -199,6 +205,9 @@ func applyEnv(cfg *Config) {
 			if port, err := strconv.Atoi(v); err == nil {
 				cfg.DashboardPort = port
 			}
+		},
+		"GOSSM_BIND": func(v string) {
+			cfg.BindAddress = v
 		},
 		"GOSSM_LOG_LEVEL": func(v string) {
 			cfg.LogLevel = v

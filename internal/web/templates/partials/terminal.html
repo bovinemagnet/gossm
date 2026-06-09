@@ -1,0 +1,97 @@
+{{define "terminal.html"}}
+<div class="terminal-overlay" id="terminal-overlay">
+    <div class="terminal-modal" role="dialog" aria-modal="true" aria-label="SSM terminal">
+        <header class="terminal-modal-head">
+            <span class="type-pill type-pill--shell">Shell</span>
+            {{if .InstanceName}}<span class="terminal-modal-name">{{.InstanceName}}</span>{{end}}
+            <span class="terminal-modal-id mono">{{.InstanceID}}</span>
+            {{if .Profile}}<span class="terminal-modal-profile"><span class="meta-key">profile</span><span class="mono">{{.Profile}}</span></span>{{end}}
+            <span class="terminal-modal-spacer"></span>
+            <span class="terminal-modal-status mono" id="terminal-status">connecting…</span>
+            <button type="button" class="btn btn--ghost btn--small" id="terminal-close" title="Close terminal">Close</button>
+        </header>
+        <div class="terminal-modal-body">
+            <div id="terminal-view" class="terminal-view"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var overlay = document.getElementById('terminal-overlay');
+    var statusEl = document.getElementById('terminal-status');
+    var viewEl = document.getElementById('terminal-view');
+
+    var term = new Terminal({
+        cursorBlink: true,
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        fontSize: 13,
+        theme: { background: '#0b1120', foreground: '#e2e8f0' }
+    });
+    var fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(viewEl);
+    fit.fit();
+
+    var proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    var params = new URLSearchParams({
+        instance: '{{.InstanceID}}',
+        profile: '{{.Profile}}',
+        token: '{{.Token}}'
+    });
+    var ws = new WebSocket(proto + '://' + window.location.host + '/ws/terminal?' + params.toString());
+    ws.binaryType = 'arraybuffer';
+
+    function sendResize() {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows }));
+        }
+    }
+
+    var enc = new TextEncoder();
+    term.onData(function (d) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(enc.encode(d));
+        }
+    });
+
+    ws.onopen = function () {
+        statusEl.textContent = 'connected';
+        fit.fit();
+        sendResize();
+        term.focus();
+    };
+    ws.onmessage = function (ev) {
+        if (typeof ev.data === 'string') {
+            term.write(ev.data);
+        } else {
+            term.write(new Uint8Array(ev.data));
+        }
+    };
+    ws.onclose = function () {
+        statusEl.textContent = 'disconnected';
+        term.write('\r\n\x1b[33m[session closed]\x1b[0m\r\n');
+    };
+    ws.onerror = function () {
+        statusEl.textContent = 'error';
+    };
+
+    var resizeObs = new ResizeObserver(function () {
+        try { fit.fit(); sendResize(); } catch (e) {}
+    });
+    resizeObs.observe(viewEl);
+
+    function teardown() {
+        try { resizeObs.disconnect(); } catch (e) {}
+        try { ws.close(); } catch (e) {}
+        try { term.dispose(); } catch (e) {}
+        overlay.remove();
+    }
+
+    document.getElementById('terminal-close').addEventListener('click', teardown);
+    overlay.addEventListener('click', function (ev) {
+        if (ev.target === overlay) { teardown(); }
+    });
+})();
+</script>
+{{end}}

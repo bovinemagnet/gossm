@@ -6,7 +6,9 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.16.7
 	github.com/aws/aws-sdk-go-v2/config v1.15.14
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.49.1
+	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.27.0
 	github.com/spf13/cobra v1.10.2
 )

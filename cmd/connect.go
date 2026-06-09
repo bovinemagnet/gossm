@@ -42,7 +42,7 @@ func init() {
 	connectCmd.Flags().StringVarP(&connectTarget, "target", "t", "", "connect directly to an instance ID")
 	connectCmd.Flags().BoolVarP(&connectShowInstanceType, "type", "y", false, "display instance type")
 	connectCmd.Flags().BoolVarP(&connectShowAZ, "az", "z", false, "display availability zone")
-	connectCmd.Flags().BoolVarP(&connectShowIP, "ip", "i", false, "display private IP address")
+	connectCmd.Flags().BoolVarP(&connectShowIP, "ip", "i", true, "display private IP address (use --ip=false to hide)")
 	connectCmd.Flags().IntVar(&connectLocalPort, "local-port", 0, "local port for port forwarding")
 	connectCmd.Flags().IntVar(&connectRemotePort, "remote-port", 0, "remote port for port forwarding")
 	connectCmd.Flags().StringVar(&connectRemoteHost, "remote-host", "", "remote host for port forwarding (default: localhost)")

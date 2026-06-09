@@ -86,7 +86,7 @@ func runDaemonStart(cmd *cobra.Command, args []string) {
 	}
 	srv := web.NewServer(d.SessionManager(), cfg, d.StartedAt(), ec2Factory)
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.DashboardPort),
+		Addr:    fmt.Sprintf("%s:%d", cfg.BindAddress, cfg.DashboardPort),
 		Handler: srv.Handler(),
 	}
 

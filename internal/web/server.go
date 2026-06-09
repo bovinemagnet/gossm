@@ -12,6 +12,7 @@ import (
 	awsutil "github.com/bovinemagnet/gossm/internal/aws"
 	"github.com/bovinemagnet/gossm/internal/config"
 	"github.com/bovinemagnet/gossm/internal/session"
+	"github.com/gorilla/websocket"
 )
 
 // EC2ClientFactory creates an EC2DescribeInstancesAPI for the given AWS profile.
@@ -30,6 +31,11 @@ type Server struct {
 	mux        *http.ServeMux
 	tmpl       *template.Template
 	startedAt  time.Time
+
+	// Terminal support.
+	terminalToken  string
+	termCmdBuilder terminalCmdBuilder
+	upgrader       websocket.Upgrader
 }
 
 // NewServer creates a new web server, parses templates, sets up routes,
@@ -69,17 +75,25 @@ func NewServer(sm *session.SessionManager, cfg *config.Config, startedAt time.Ti
 			"templates/partials/instance_picker.html",
 			"templates/partials/preset_card.html",
 			"templates/partials/manual_launch.html",
+			"templates/partials/terminal.html",
 		),
 	)
 
 	s := &Server{
-		sm:         sm,
-		cfg:        cfg,
-		ec2Factory: ec2Factory,
-		mux:        http.NewServeMux(),
-		tmpl:       tmpl,
-		startedAt:  startedAt,
-		sse:        NewSSEBroker(sm.OnChange),
+		sm:             sm,
+		cfg:            cfg,
+		ec2Factory:     ec2Factory,
+		mux:            http.NewServeMux(),
+		tmpl:           tmpl,
+		startedAt:      startedAt,
+		sse:            NewSSEBroker(sm.OnChange),
+		terminalToken:  generateTerminalToken(),
+		termCmdBuilder: defaultTerminalCmdBuilder,
+	}
+	s.upgrader = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return originAllowed(r.Header.Get("Origin"), r.Host)
+		},
 	}
 
 	s.setupRoutes()
@@ -112,6 +126,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/probe-interval", s.handleSetProbeInterval)
 	s.mux.HandleFunc("GET /api/instances", s.handleInstances)
 	s.mux.HandleFunc("GET /api/profiles", s.handleProfiles)
+
+	// Terminal.
+	s.mux.HandleFunc("GET /api/terminal", s.handleTerminalPanel)
+	s.mux.HandleFunc("GET /ws/terminal", s.handleTerminalWS)
 
 	// Presets.
 	s.mux.HandleFunc("GET /api/presets/{index}", s.handlePreset)

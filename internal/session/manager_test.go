@@ -241,6 +241,76 @@ func TestRegisterExternal(t *testing.T) {
 	}
 }
 
+func TestAdoptSession(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "sleep", "3600")
+	if err := cmd.Start(); err != nil {
+		cancel()
+		t.Fatalf("failed to start cmd: %v", err)
+	}
+
+	id := sm.AdoptSession(testOpts("term"), cmd, cancel)
+	if id == "" {
+		t.Fatal("AdoptSession returned empty id")
+	}
+
+	s, ok := sm.GetSession(id)
+	if !ok {
+		t.Fatal("adopted session not found")
+	}
+	if s.State != StateRunning {
+		t.Errorf("State = %d, want StateRunning(%d)", s.State, StateRunning)
+	}
+	if s.Type != TypeShell {
+		t.Errorf("Type = %d, want TypeShell(%d)", s.Type, TypeShell)
+	}
+	if s.Reconnectable {
+		t.Error("adopted shell should not be reconnectable")
+	}
+	if s.PID != cmd.Process.Pid {
+		t.Errorf("PID = %d, want %d", s.PID, cmd.Process.Pid)
+	}
+
+	// StopSession should cancel/kill the adopted subprocess.
+	if err := sm.StopSession(id); err != nil {
+		t.Fatalf("StopSession failed: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	s, _ = sm.GetSession(id)
+	if s.State != StateStopped && s.State != StateErrored && s.State != StateStopping {
+		t.Errorf("state after stop = %d, want stopped/errored/stopping", s.State)
+	}
+}
+
+func TestAdoptSessionNaturalExit(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	defer sm.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "sleep", "0.1")
+	if err := cmd.Start(); err != nil {
+		cancel()
+		t.Fatalf("failed to start cmd: %v", err)
+	}
+
+	id := sm.AdoptSession(testOpts("shortlived"), cmd, cancel)
+
+	// The monitor goroutine should observe the natural exit and mark the
+	// session terminal.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s, ok := sm.GetSession(id)
+		if ok && (s.State == StateStopped || s.State == StateErrored) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("adopted session did not reach a terminal state after natural exit")
+}
+
 func TestConcurrentAccess(t *testing.T) {
 	sm := New(sleepBuilder(), nil)
 	defer sm.Close()

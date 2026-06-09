@@ -22,6 +22,7 @@
         <div class="preset-card-route">localhost:{{.Preset.LocalPort}} → {{if .Preset.RemoteHost}}{{.Preset.RemoteHost}}:{{end}}{{.Preset.RemotePort}}</div>
         {{end}}
     </div>
+    {{if eq .Preset.SessionType "port-forward"}}
     <button type="button"
             class="btn btn--primary btn--small"
             hx-post="/api/presets/{{.Index}}/start"
@@ -29,5 +30,15 @@
             hx-swap="innerHTML">
         Start
     </button>
+    {{else}}
+    <button type="button"
+            class="btn btn--primary btn--small"
+            hx-get="/api/terminal?instance_id={{.Preset.InstanceID | urlquery}}&profile={{.Preset.Profile | urlquery}}&instance_name={{.Preset.InstanceName | urlquery}}"
+            hx-target="#terminal-host"
+            hx-swap="innerHTML"
+            title="Open an interactive shell to this instance in the browser">
+        Open Terminal
+    </button>
+    {{end}}
 </article>
 {{end}}

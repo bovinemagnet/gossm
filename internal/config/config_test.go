@@ -31,6 +31,28 @@ func TestDefaultConfig_ProbeAndReconnectDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultConfig_BindAddress(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.BindAddress != "127.0.0.1" {
+		t.Errorf("BindAddress = %q, want 127.0.0.1", cfg.BindAddress)
+	}
+}
+
+func TestLoadKeyValueFile_BindAddress(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config")
+	if err := os.WriteFile(cfgFile, []byte("GOSSM_BIND=0.0.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DefaultConfig()
+	loadKeyValueFile(cfgFile, cfg)
+
+	if cfg.BindAddress != "0.0.0.0" {
+		t.Errorf("BindAddress = %q, want 0.0.0.0", cfg.BindAddress)
+	}
+}
+
 func TestLoadKeyValueFile_ProbeAndReconnect(t *testing.T) {
 	dir := t.TempDir()
 	cfgFile := filepath.Join(dir, "config")

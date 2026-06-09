@@ -67,6 +67,14 @@
 
     <div class="form-actions">
         <button type="submit" class="btn btn--primary">Start Session</button>
+        <button type="button" class="btn btn--ghost"
+                hx-get="/api/terminal"
+                hx-include="#launch-form"
+                hx-target="#terminal-host"
+                hx-swap="innerHTML"
+                title="Open an interactive shell to the selected instance in the browser">
+            Open Terminal
+        </button>
     </div>
 </form>
 {{end}}

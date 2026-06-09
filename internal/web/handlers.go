@@ -45,6 +45,7 @@ type DashboardData struct {
 	SparkSVG        template.HTML
 	Presets         []config.SessionPreset
 	LastUpdate      string
+	TerminalToken   string
 }
 
 // splitSessions separates a session slice into active (live or
@@ -429,6 +430,7 @@ func (s *Server) buildDashboardData() DashboardData {
 		SparkSVG:        template.HTML(renderSparkSVG(s.sm.SparkData())),
 		Presets:         s.cfg.Presets,
 		LastUpdate:      time.Now().Format("15:04:05"),
+		TerminalToken:   s.terminalToken,
 	}
 }
 

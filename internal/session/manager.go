@@ -218,6 +218,46 @@ func (m *SessionManager) StartSession(opts SessionOpts) (string, error) {
 	return id, nil
 }
 
+// AdoptSession registers an already-started subprocess (for example a
+// PTY-backed shell owned by the web terminal handler) so it appears in the
+// dashboard and StopSession can cancel and kill it. The caller owns the
+// subprocess I/O; the manager owns cmd.Wait() via the monitor goroutine.
+//
+// Adopted sessions are non-reconnectable shells: when the subprocess exits,
+// monitor transitions them to StateStopped or StateErrored and emits an
+// updated event.
+func (m *SessionManager) AdoptSession(opts SessionOpts, cmd *exec.Cmd, cancel context.CancelFunc) string {
+	id := uuid.New().String()
+	waitDone := make(chan struct{})
+
+	s := &Session{
+		ID:            id,
+		InstanceID:    opts.InstanceID,
+		InstanceName:  opts.InstanceName,
+		Profile:       opts.Profile,
+		Type:          TypeShell,
+		State:         StateRunning,
+		StartedAt:     time.Now(),
+		cmd:           cmd,
+		cancel:        cancel,
+		waitDone:      waitDone,
+		Reconnectable: false,
+	}
+	if cmd != nil && cmd.Process != nil {
+		s.PID = cmd.Process.Pid
+	}
+
+	m.mu.Lock()
+	m.sessions[id] = s
+	m.mu.Unlock()
+
+	m.emit(SessionEvent{Type: "added", SessionID: id, Timestamp: time.Now()})
+
+	go m.monitor(s, cmd, waitDone)
+
+	return id
+}
+
 // monitor waits for the subprocess to finish and updates state accordingly.
 // cmd and waitDone are passed in so each monitor goroutine owns its own
 // subprocess: after a reconnect, the previous monitor closes its OWN
