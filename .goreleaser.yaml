@@ -126,6 +126,7 @@ homebrew_casks:
       owner: bovinemagnet
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/bovinemagnet/gossm"
     description: "Tool to connect to aws resources."
