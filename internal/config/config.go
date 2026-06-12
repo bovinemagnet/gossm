@@ -101,10 +101,21 @@ func loadKeyValueFile(path string, cfg *Config) {
 		}
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
-		// Remove surrounding quotes if present.
-		value = strings.Trim(value, "\"'")
+		value = stripMatchingQuotes(value)
 		applyKeyValue(key, value, cfg)
 	}
+}
+
+// stripMatchingQuotes removes one surrounding pair of matching quotes,
+// leaving mismatched or embedded quotes intact.
+func stripMatchingQuotes(value string) string {
+	if len(value) >= 2 {
+		first, last := value[0], value[len(value)-1]
+		if first == last && (first == '"' || first == '\'') {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }
 
 // applyKeyValue sets a config field from a key-value pair.

@@ -201,6 +201,42 @@ func TestLoadKeyValueFile_Quotes(t *testing.T) {
 	}
 }
 
+// TestLoadKeyValueFile_QuoteEdgeCases verifies only a single matching
+// surrounding quote pair is stripped — mismatched or embedded quotes are
+// preserved rather than silently mangled.
+func TestLoadKeyValueFile_QuoteEdgeCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"matched double", `"info"`, "info"},
+		{"matched single", `'info'`, "info"},
+		{"unquoted", `info`, "info"},
+		{"apostrophe inside double quotes", `"it's"`, "it's"},
+		{"mismatched pair preserved", `"info'`, `"info'`},
+		{"trailing quote only preserved", `info'`, `info'`},
+		{"nested quotes strip one pair", `'"info"'`, `"info"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgFile := filepath.Join(dir, "config")
+			content := "GOSSM_LOG_LEVEL=" + c.value + "\n"
+			if err := os.WriteFile(cfgFile, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg := DefaultConfig()
+			loadKeyValueFile(cfgFile, cfg)
+
+			if cfg.LogLevel != c.want {
+				t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, c.want)
+			}
+		})
+	}
+}
+
 func TestApplyEnv(t *testing.T) {
 	t.Setenv("GOSSM_PORT", "5555")
 
