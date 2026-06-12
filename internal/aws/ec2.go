@@ -5,10 +5,10 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -18,15 +18,6 @@ import (
 )
 
 var nameString = "tag:Name"
-
-// InstancePosition holds the display position and identity of an EC2 instance.
-type InstancePosition struct {
-	Num              int
-	ReservationCount int
-	InstanceCount    int
-	InstanceID       string
-	InstanceName     string
-}
 
 // DisplayOptions controls which optional columns are shown in the instance listing.
 type DisplayOptions struct {
@@ -91,81 +82,53 @@ func SafeString(s *string, fallback string) string {
 	return *s
 }
 
-// ListInstances prints the instance list using tabwriter and returns the position map.
-func ListInstances(result *ec2.DescribeInstancesOutput, opts DisplayOptions) map[int]InstancePosition {
-	instancePositions := make(map[int]InstancePosition)
+// renderInstances prints a numbered instance list using tabwriter. The list
+// is numbered from 1, so a filtered subset renumbers from [1].
+func renderInstances(w io.Writer, instances []InstanceInfo, opts DisplayOptions) {
+	tw := tabwriter.NewWriter(w, 0, 0, 3, ' ', 0)
+	for i, inst := range instances {
+		fmt.Fprintf(tw, "[%d]\t%s\t%s\t%s", i+1, inst.InstanceID, inst.InstanceName, inst.State)
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-
-	counter := 0
-	reservationCount := 0
-	for _, r := range result.Reservations {
-		instanceCount := 0
-		reservationCount++
-		for _, inst := range r.Instances {
-			instanceCount++
-			counter++
-
-			instanceID := SafeString(inst.InstanceId, "N/A")
-			instanceName := GetValue("name", inst.Tags)
-			state := string(inst.State.Name)
-
-			fmt.Fprintf(w, "[%d]\t%s\t%s\t%s", counter, instanceID, instanceName, state)
-
-			if opts.ShowInstanceType {
-				fmt.Fprintf(w, "\t%s", string(inst.InstanceType))
-			}
-			if opts.ShowAvailabilityZone {
-				az := ""
-				if inst.Placement != nil {
-					az = SafeString(inst.Placement.AvailabilityZone, "")
-				}
-				fmt.Fprintf(w, "\t%s", az)
-			}
-			if opts.ShowPrivateIP {
-				fmt.Fprintf(w, "\t%s", SafeString(inst.PrivateIpAddress, "N/A"))
-			}
-			fmt.Fprintln(w)
-
-			instancePositions[counter] = InstancePosition{
-				Num:              counter,
-				ReservationCount: reservationCount,
-				InstanceCount:    instanceCount,
-				InstanceID:       instanceID,
-				InstanceName:     instanceName,
-			}
+		if opts.ShowInstanceType {
+			fmt.Fprintf(tw, "\t%s", inst.InstanceType)
 		}
+		if opts.ShowAvailabilityZone {
+			fmt.Fprintf(tw, "\t%s", inst.AZ)
+		}
+		if opts.ShowPrivateIP {
+			ip := inst.PrivateIP
+			if ip == "" {
+				ip = "N/A"
+			}
+			fmt.Fprintf(tw, "\t%s", ip)
+		}
+		fmt.Fprintln(tw)
 	}
-	w.Flush()
-
-	return instancePositions
+	tw.Flush()
 }
 
-// PromptUser asks the user to select an instance number. Returns the chosen number.
-func PromptUser(scanner *bufio.Scanner, max int) (int, error) {
-	fmt.Print("Launch number: [Q/q:Quit] > ")
-	scanner.Scan()
-	if err := scanner.Err(); err != nil {
-		return 0, fmt.Errorf("error reading input: %w", err)
+// PromptInstance asks the user to select an instance, filtering the list by
+// name or instance ID as they type. Returns the chosen instance.
+func PromptInstance(scanner *bufio.Scanner, instances []InstanceInfo, opts DisplayOptions) (InstanceInfo, error) {
+	names := make([]string, len(instances))
+	for i, inst := range instances {
+		names[i] = inst.InstanceName + " " + inst.InstanceID
 	}
 
-	text := strings.TrimSpace(scanner.Text())
-	log.Info().Msg("Selected: [" + text + "]")
-
-	switch strings.ToLower(text) {
-	case "q", "e":
-		fmt.Println("Exiting...")
-		os.Exit(0)
+	render := func(visible []int) {
+		subset := make([]InstanceInfo, len(visible))
+		for i, idx := range visible {
+			subset[i] = instances[idx]
+		}
+		renderInstances(os.Stdout, subset, opts)
 	}
 
-	num, err := strconv.Atoi(text)
+	idx, err := selectFromList(scanner, "Launch number", names, render)
 	if err != nil {
-		return 0, fmt.Errorf("invalid launch number: %s", text)
+		return InstanceInfo{}, err
 	}
-	if num < 1 || num > max {
-		return 0, fmt.Errorf("launch number %d out of range (1-%d)", num, max)
-	}
-	return num, nil
+	log.Info().Msg("Selected Instance: " + instances[idx].InstanceID)
+	return instances[idx], nil
 }
 
 // InstanceInfo holds structured EC2 instance data for the web dashboard.

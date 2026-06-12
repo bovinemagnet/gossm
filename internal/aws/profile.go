@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -41,7 +40,8 @@ func ParseAWSProfiles() ([]string, error) {
 	return profiles, nil
 }
 
-// PromptProfile displays available AWS profiles and lets the user pick one.
+// PromptProfile displays available AWS profiles and lets the user pick one,
+// filtering the list as they type.
 func PromptProfile(scanner *bufio.Scanner) (string, error) {
 	profiles, err := ParseAWSProfiles()
 	if err != nil {
@@ -50,30 +50,22 @@ func PromptProfile(scanner *bufio.Scanner) (string, error) {
 	if len(profiles) == 0 {
 		return "", fmt.Errorf("no profiles found in ~/.aws/config")
 	}
+	return promptProfileFrom(scanner, profiles)
+}
 
-	fmt.Println("Available AWS Profiles:")
-	for i, p := range profiles {
-		fmt.Printf("[%d]   %s\n", i+1, p)
-	}
-	fmt.Print("Select profile: [Q/q:Quit] > ")
-	scanner.Scan()
-	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading input: %w", err)
-	}
-
-	text := strings.TrimSpace(scanner.Text())
-	switch strings.ToLower(text) {
-	case "q", "e":
-		fmt.Println("Exiting...")
-		os.Exit(0)
+// promptProfileFrom runs the interactive profile pick loop over the given
+// profile names.
+func promptProfileFrom(scanner *bufio.Scanner, profiles []string) (string, error) {
+	render := func(visible []int) {
+		fmt.Println("Available AWS Profiles:")
+		for i, idx := range visible {
+			fmt.Printf("[%d]   %s\n", i+1, profiles[idx])
+		}
 	}
 
-	num, err := strconv.Atoi(text)
+	idx, err := selectFromList(scanner, "Select profile", profiles, render)
 	if err != nil {
-		return "", fmt.Errorf("invalid selection: %s", text)
+		return "", err
 	}
-	if num < 1 || num > len(profiles) {
-		return "", fmt.Errorf("selection %d out of range (1-%d)", num, len(profiles))
-	}
-	return profiles[num-1], nil
+	return profiles[idx], nil
 }

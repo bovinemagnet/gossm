@@ -35,7 +35,7 @@ If the `AWS_PROFILE` environment variable is not set, gossm reads all named prof
 [1]   default
 [2]   production
 [3]   staging
-Select profile:> 2
+Select profile: [number, text:filter, Q/q:Quit] > 2
 ----
 
 === Step 2 — Select an Instance
@@ -48,11 +48,11 @@ displays a numbered list:
 [1]   i-0aaa111bbb222ccc3   web-server-01.example.com
 [2]   i-0ddd444eee555fff6   api-server-01.example.com
 [3]   i-0ggg777hhh888iii9   db-proxy-01.example.com
-Launch number:> 1
+Launch number: [number, text:filter, Q/q:Quit] > 1
 ----
 
 Each entry shows the instance ID followed by the Name tag (or hostname if no Name tag is set).
-Enter the number corresponding to the instance you want to connect to and press Enter.
+Type a number and press Enter to select from the displayed list, or type text and press Enter to filter the list to entries whose name or ID contains that text. Press Enter on an empty line to reset to the full list.
 
 === Step 3 — Shell Session Opens
 
