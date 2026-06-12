@@ -3,8 +3,10 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"time"
 
 	"github.com/bovinemagnet/gossm/internal/config"
 	"github.com/bovinemagnet/gossm/internal/session"
@@ -30,6 +32,9 @@ type IPCServer struct {
 	cfg      *config.Config
 	daemon   *Daemon
 	done     chan struct{}
+	// readTimeout bounds how long a connected client may take to deliver
+	// its request (and the response write). Set before Serve.
+	readTimeout time.Duration
 }
 
 // registerRequest is the JSON payload for the "register" action.
@@ -56,12 +61,20 @@ func NewIPCServer(cfg *config.Config, sm *session.SessionManager, d *Daemon) (*I
 		return nil, fmt.Errorf("listen on %s: %w", sockPath, err)
 	}
 
+	// The socket accepts shutdown/register actions, so it must be
+	// owner-only rather than inheriting the process umask.
+	if err := os.Chmod(sockPath, 0o600); err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("chmod socket: %w", err)
+	}
+
 	return &IPCServer{
-		listener: listener,
-		sm:       sm,
-		cfg:      cfg,
-		daemon:   d,
-		done:     make(chan struct{}),
+		listener:    listener,
+		sm:          sm,
+		cfg:         cfg,
+		daemon:      d,
+		done:        make(chan struct{}),
+		readTimeout: ipcReadTimeout,
 	}, nil
 }
 
@@ -83,13 +96,23 @@ func (s *IPCServer) Serve() {
 	}()
 }
 
+// ipcReadTimeout is the default bound on how long a connected client may
+// take to deliver its request (and how long the response write may take).
+const ipcReadTimeout = 5 * time.Second
+
+// ipcMaxRequestBytes bounds how much a single request may buffer.
+const ipcMaxRequestBytes = 1 << 20
+
 // handleConnection reads one JSON request, dispatches it, writes one JSON
-// response, and closes the connection.
+// response, and closes the connection. A deadline and size limit stop a
+// stalled or misbehaving client from holding a goroutine or growing the
+// heap indefinitely.
 func (s *IPCServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(s.readTimeout))
 
 	var req IPCRequest
-	if err := json.NewDecoder(conn).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(conn, ipcMaxRequestBytes)).Decode(&req); err != nil {
 		resp := IPCResponse{OK: false, Error: "invalid request: " + err.Error()}
 		_ = json.NewEncoder(conn).Encode(resp)
 		return

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/bovinemagnet/gossm/internal/config"
 )
@@ -15,10 +16,14 @@ type StatusResponse struct {
 	Port         int    `json:"port"`
 }
 
+// ipcClientTimeout bounds the dial and the full request/response
+// exchange so CLI commands stay responsive when the daemon is wedged.
+const ipcClientTimeout = 5 * time.Second
+
 // IPCConnect connects to the daemon's Unix socket and returns the connection.
 // The caller is responsible for closing the connection.
 func IPCConnect(cfg *config.Config) (net.Conn, error) {
-	conn, err := net.Dial("unix", cfg.SocketPath())
+	conn, err := net.DialTimeout("unix", cfg.SocketPath(), ipcClientTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("connect to daemon: %w", err)
 	}
@@ -33,6 +38,7 @@ func IPCSend(cfg *config.Config, req IPCRequest) (*IPCResponse, error) {
 		return nil, err
 	}
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(ipcClientTimeout))
 
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return nil, fmt.Errorf("send request: %w", err)

@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -241,6 +242,113 @@ func TestIPCRegisterPortForward(t *testing.T) {
 	}
 	if s.PID != 88888 {
 		t.Errorf("PID = %d, want 88888", s.PID)
+	}
+}
+
+// TestIPCSocketPermissions verifies the socket file is not accessible
+// to other local users — it accepts shutdown/register actions, so it
+// must be owner-only rather than inheriting the umask.
+func TestIPCSocketPermissions(t *testing.T) {
+	cfg := testConfig(t)
+	sm := session.New(nil, nil)
+	d := testDaemon(cfg, sm)
+
+	srv, err := NewIPCServer(cfg, sm, d)
+	if err != nil {
+		t.Fatalf("NewIPCServer: %v", err)
+	}
+	defer srv.Stop()
+
+	info, err := os.Stat(cfg.SocketPath())
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("socket permissions = %o, want owner-only (no group/other bits)", perm)
+	}
+}
+
+// TestIPCIdleClientDisconnected verifies a client that connects but
+// never writes is disconnected by the read deadline instead of holding
+// a daemon goroutine open forever.
+func TestIPCIdleClientDisconnected(t *testing.T) {
+	cfg := testConfig(t)
+	sm := session.New(nil, nil)
+	d := testDaemon(cfg, sm)
+
+	srv, err := NewIPCServer(cfg, sm, d)
+	if err != nil {
+		t.Fatalf("NewIPCServer: %v", err)
+	}
+	defer srv.Stop()
+	srv.readTimeout = 100 * time.Millisecond // before Serve, so handlers see it
+	srv.Serve()
+
+	conn, err := net.Dial("unix", cfg.SocketPath())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Write nothing; the server must close the connection once the
+	// deadline passes.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	if _, err := conn.Read(buf); err == nil {
+		t.Fatal("expected server to close idle connection, but read succeeded")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("server never closed the idle connection (client read timed out)")
+	}
+}
+
+// TestIPCOversizedRequestRejected verifies the server bounds how much
+// it will buffer from a single request instead of growing without limit.
+func TestIPCOversizedRequestRejected(t *testing.T) {
+	// t.TempDir embeds this test's long name, pushing the socket path
+	// past the platform limit for Unix socket paths — use a short dir.
+	dir, err := os.MkdirTemp("", "gossm")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	cfg := &config.Config{
+		DashboardPort: 8877,
+		LogLevel:      "warn",
+		PIDDir:        dir,
+	}
+	sm := session.New(nil, nil)
+	d := testDaemon(cfg, sm)
+
+	srv, err := NewIPCServer(cfg, sm, d)
+	if err != nil {
+		t.Fatalf("NewIPCServer: %v", err)
+	}
+	defer srv.Stop()
+	srv.Serve()
+
+	conn, err := net.Dial("unix", cfg.SocketPath())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// A syntactically valid request padded past the size limit.
+	padding := make([]byte, 2<<20)
+	for i := range padding {
+		padding[i] = 'a'
+	}
+	payload, _ := json.Marshal(map[string]string{"pad": string(padding)})
+	req := IPCRequest{Action: "status", Data: payload}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		// The server may legitimately close the connection mid-write
+		// once the limit is hit.
+		return
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var resp IPCResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err == nil && resp.OK {
+		t.Fatal("oversized request was accepted; expected rejection")
 	}
 }
 

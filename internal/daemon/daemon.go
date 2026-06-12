@@ -37,7 +37,37 @@ func WritePID(cfg *config.Config) error {
 		return fmt.Errorf("ensure pid dir: %w", err)
 	}
 	data := []byte(strconv.Itoa(os.Getpid()))
-	return os.WriteFile(cfg.PIDFilePath(), data, 0o644)
+	return os.WriteFile(cfg.PIDFilePath(), data, 0o600)
+}
+
+// acquirePID atomically claims the PID file with an exclusive create so
+// two racing daemon starts cannot both pass a check-then-write. A stale
+// file left by a crashed daemon (dead PID) is removed and the claim
+// retried once.
+func acquirePID(cfg *config.Config) error {
+	if err := cfg.EnsurePIDDir(); err != nil {
+		return fmt.Errorf("ensure pid dir: %w", err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.OpenFile(cfg.PIDFilePath(), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			_, werr := f.WriteString(strconv.Itoa(os.Getpid()))
+			cerr := f.Close()
+			if werr != nil {
+				return fmt.Errorf("write pid: %w", werr)
+			}
+			return cerr
+		}
+		if !os.IsExist(err) {
+			return fmt.Errorf("create pid file: %w", err)
+		}
+		if alive, pid := IsRunning(cfg); alive {
+			return fmt.Errorf("daemon already running (pid %d)", pid)
+		}
+		// Stale PID file — remove it and retry the exclusive create.
+		_ = os.Remove(cfg.PIDFilePath())
+	}
+	return fmt.Errorf("could not acquire pid file %s", cfg.PIDFilePath())
 }
 
 // RemovePID removes the PID file, ignoring errors.
@@ -61,9 +91,10 @@ func ReadPID(cfg *config.Config) (int, error) {
 // Start creates a new Daemon, starts the SessionManager and IPC server, writes
 // the PID file, and begins periodic spark-point recording.
 func Start(cfg *config.Config) (*Daemon, error) {
-	alive, existingPID := IsRunning(cfg)
-	if alive {
-		return nil, fmt.Errorf("daemon already running (pid %d)", existingPID)
+	// Claim the PID file first — it is the mutual-exclusion lock. Only
+	// then is it safe to evict a stale socket in NewIPCServer.
+	if err := acquirePID(cfg); err != nil {
+		return nil, err
 	}
 
 	sm := session.New(nil, isProcessAlive)
@@ -86,15 +117,11 @@ func Start(cfg *config.Config) (*Daemon, error) {
 
 	ipc, err := NewIPCServer(cfg, sm, d)
 	if err != nil {
+		RemovePID(cfg)
 		return nil, fmt.Errorf("start ipc server: %w", err)
 	}
 	d.ipc = ipc
 	ipc.Serve()
-
-	if err := WritePID(cfg); err != nil {
-		ipc.Stop()
-		return nil, fmt.Errorf("write pid: %w", err)
-	}
 
 	// Periodically record spark data points.
 	go func() {
@@ -133,6 +160,14 @@ func (d *Daemon) Stop() error {
 	_ = os.Remove(d.cfg.SocketPath())
 
 	return nil
+}
+
+// Done returns a channel that is closed when the daemon has been asked
+// to stop (for example via the IPC shutdown action). The daemon body in
+// cmd/daemon.go selects on this alongside OS signals so an IPC-initiated
+// shutdown actually terminates the process.
+func (d *Daemon) Done() <-chan struct{} {
+	return d.stopCh
 }
 
 // SessionManager returns the daemon's session manager.

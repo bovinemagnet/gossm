@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -88,6 +89,10 @@ func runDaemonStart(cmd *cobra.Command, args []string) {
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", cfg.BindAddress, cfg.DashboardPort),
 		Handler: srv.Handler(),
+		// No global Read/WriteTimeout: SSE and terminal WebSocket
+		// connections are long-lived. The header timeout still stops
+		// connections that never send a request from piling up.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	fmt.Printf("gossm daemon running. Dashboard at http://localhost:%d\n", cfg.DashboardPort)
@@ -102,29 +107,35 @@ func runDaemonStart(cmd *cobra.Command, args []string) {
 		}
 	}()
 
-	<-sigCh
-	fmt.Println("\nShutting down...")
-	httpServer.Close()
+	// Exit on an OS signal or an IPC-initiated shutdown — without the
+	// latter, `gossm daemon stop` would leave this process alive holding
+	// the dashboard port.
+	select {
+	case <-sigCh:
+		fmt.Println("\nShutting down...")
+	case <-d.Done():
+		fmt.Println("Shutdown requested, stopping...")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		httpServer.Close()
+	}
 	d.Stop()
 }
 
 func runDaemonStop(cmd *cobra.Command, args []string) {
 	cfg := goconfig.Load()
 
-	running, _ := daemon.IsRunning(cfg)
-	if !running {
-		fmt.Println("Daemon is not running.")
-		return
-	}
-
-	// Try graceful shutdown via IPC first.
+	// Try graceful shutdown via IPC first; fall back to the PID file if
+	// the socket is gone or unresponsive.
 	resp, err := daemon.IPCSend(cfg, daemon.IPCRequest{Action: "shutdown"})
 	if err != nil {
-		// IPC failed, try killing by PID.
-		pid, pidErr := daemon.ReadPID(cfg)
-		if pidErr != nil {
-			fmt.Println("Cannot determine daemon PID:", pidErr)
-			os.Exit(1)
+		running, pid := daemon.IsRunning(cfg)
+		if !running {
+			fmt.Println("Daemon is not running.")
+			return
 		}
 		proc, findErr := os.FindProcess(pid)
 		if findErr != nil {

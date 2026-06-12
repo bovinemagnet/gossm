@@ -175,6 +175,45 @@ func TestStartAlreadyRunning(t *testing.T) {
 	}
 }
 
+func TestStart_StalePIDFile(t *testing.T) {
+	cfg := testConfig(t)
+	// PID file left behind by a crashed daemon (dead PID).
+	if err := os.WriteFile(cfg.PIDFilePath(), []byte("2147483647"), 0o600); err != nil {
+		t.Fatalf("write stale pid: %v", err)
+	}
+
+	d, err := Start(cfg)
+	if err != nil {
+		t.Fatalf("Start with stale PID file: %v", err)
+	}
+	defer d.Stop()
+
+	pid, err := ReadPID(cfg)
+	if err != nil {
+		t.Fatalf("ReadPID: %v", err)
+	}
+	if pid != os.Getpid() {
+		t.Errorf("PID file = %d, want %d (stale file should be replaced)", pid, os.Getpid())
+	}
+}
+
+func TestPIDFilePermissions(t *testing.T) {
+	cfg := testConfig(t)
+	d, err := Start(cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer d.Stop()
+
+	info, err := os.Stat(cfg.PIDFilePath())
+	if err != nil {
+		t.Fatalf("stat pid file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("PID file permissions = %o, want owner-only", perm)
+	}
+}
+
 func TestStopIdempotent(t *testing.T) {
 	cfg := testConfig(t)
 
@@ -331,4 +370,31 @@ func TestIPCShutdown(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	_ = d // keep reference so it isn't GC'd during shutdown
+}
+
+// TestIPCShutdown_SignalsDone verifies that an IPC shutdown unblocks
+// Done(), so the daemon body (blocked in cmd/daemon.go waiting for a
+// signal) exits instead of living on as a zombie holding the HTTP port.
+func TestIPCShutdown_SignalsDone(t *testing.T) {
+	cfg := testConfig(t)
+
+	d, err := Start(cfg)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	resp, err := IPCSend(cfg, IPCRequest{Action: "shutdown"})
+	if err != nil {
+		t.Fatalf("IPCSend shutdown: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("shutdown response not OK: %s", resp.Error)
+	}
+
+	select {
+	case <-d.Done():
+		// daemon body would now exit
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done() not closed after IPC shutdown — daemon process would never exit")
+	}
 }

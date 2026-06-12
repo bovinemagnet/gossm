@@ -30,9 +30,11 @@ func ForkDaemon(executable string, cfg *config.Config) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
-	// On Windows, CREATE_NEW_CONSOLE detaches from the parent console.
+	// DETACHED_PROCESS starts the child with no console at all, matching
+	// the Unix Setsid behaviour. (CREATE_NEW_CONSOLE would pop up a
+	// visible console window for the background daemon.)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: 0x00000010, // CREATE_NEW_CONSOLE
+		CreationFlags: 0x00000008, // DETACHED_PROCESS
 	}
 	return cmd.Start()
 }
