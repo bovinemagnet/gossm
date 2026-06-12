@@ -148,27 +148,31 @@ func runConnect(cmd *cobra.Command, args []string) {
 		LocalPort:  connectLocalPort,
 		RemotePort: connectRemotePort,
 		RemoteHost: connectRemoteHost,
+		// Register with the daemon as soon as the aws subprocess starts,
+		// using its PID, so the dashboard sees the session while it is
+		// actually live.
+		OnStart: func(pid int) {
+			tryRegisterWithDaemon(daemon.RegisterOpts{
+				InstanceID:   selected.InstanceID,
+				InstanceName: selected.InstanceName,
+				Profile:      connectProfile,
+				SessionType:  sessionType,
+				LocalPort:    connectLocalPort,
+				RemotePort:   connectRemotePort,
+				RemoteHost:   connectRemoteHost,
+				PID:          pid,
+			})
+		},
 	}
 	if err := awsutil.LaunchSession(launchOpts); err != nil {
 		log.Fatal().Msg(err.Error())
 	}
-
-	tryRegisterWithDaemon(daemon.RegisterOpts{
-		InstanceID:   selected.InstanceID,
-		InstanceName: selected.InstanceName,
-		Profile:      connectProfile,
-		SessionType:  sessionType,
-		LocalPort:    connectLocalPort,
-		RemotePort:   connectRemotePort,
-		RemoteHost:   connectRemoteHost,
-	})
 }
 
 // tryRegisterWithDaemon attempts to register this session with a running daemon.
 // Silently does nothing if the daemon is not running.
 func tryRegisterWithDaemon(opts daemon.RegisterOpts) {
 	cfg := goconfig.Load()
-	opts.PID = os.Getpid()
 	err := daemon.RegisterWithDaemon(cfg, opts)
 	if err != nil {
 		log.Debug().Err(err).Msg("could not register with daemon (not running?)")

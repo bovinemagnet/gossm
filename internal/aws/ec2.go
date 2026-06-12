@@ -43,9 +43,36 @@ type EC2DescribeInstancesAPI interface {
 		optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 }
 
-// GetInstances retrieves information about Amazon EC2 instances.
+// GetInstances retrieves information about Amazon EC2 instances,
+// following NextToken pagination so accounts with more instances than
+// one DescribeInstances page are not silently truncated.
 func GetInstances(c context.Context, api EC2DescribeInstancesAPI, input *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
-	return api.DescribeInstances(c, input)
+	out, err := api.DescribeInstances(c, input)
+	if err != nil || out == nil {
+		return out, err
+	}
+
+	combined := *out
+	for out.NextToken != nil && *out.NextToken != "" {
+		next := *input
+		next.NextToken = out.NextToken
+		out, err = api.DescribeInstances(c, &next)
+		if err != nil {
+			return nil, err
+		}
+		combined.Reservations = append(combined.Reservations, out.Reservations...)
+	}
+	combined.NextToken = nil
+	return &combined, nil
+}
+
+// instanceState safely extracts the state name; State is a pointer in
+// the SDK and is not guaranteed non-nil.
+func instanceState(inst types.Instance) string {
+	if inst.State == nil {
+		return ""
+	}
+	return string(inst.State.Name)
 }
 
 // GetValue returns the value of a tag by key (case-insensitive).
@@ -72,7 +99,7 @@ func BuildFilters(flagFilters []string, positionalArgs []string) []types.Filter 
 	allFilters = append(allFilters, positionalArgs...)
 
 	if len(allFilters) > 0 {
-		fmt.Println("Applying Filters:", allFilters)
+		log.Debug().Strs("filters", allFilters).Msg("applying filters")
 		wildcarded := make([]string, len(allFilters))
 		for i, v := range allFilters {
 			wildcarded[i] = "*" + v + "*"
@@ -108,7 +135,7 @@ func ListInstances(result *ec2.DescribeInstancesOutput, opts DisplayOptions) map
 
 			instanceID := SafeString(inst.InstanceId, "N/A")
 			instanceName := GetValue("name", inst.Tags)
-			state := string(inst.State.Name)
+			state := instanceState(inst)
 
 			fmt.Fprintf(w, "[%d]\t%s\t%s\t%s", counter, instanceID, instanceName, state)
 
@@ -189,7 +216,7 @@ func ExtractInstances(output *ec2.DescribeInstancesOutput) []InstanceInfo {
 			info := InstanceInfo{
 				InstanceID:   SafeString(inst.InstanceId, "N/A"),
 				InstanceName: GetValue("name", inst.Tags),
-				State:        string(inst.State.Name),
+				State:        instanceState(inst),
 				InstanceType: string(inst.InstanceType),
 				PrivateIP:    SafeString(inst.PrivateIpAddress, ""),
 			}
@@ -210,7 +237,13 @@ type LaunchOpts struct {
 	LocalPort  int
 	RemotePort int
 	RemoteHost string
+	// OnStart, if set, is invoked with the aws subprocess PID once the
+	// session has started, before LaunchSession blocks waiting for it.
+	OnStart func(pid int)
 }
+
+// execCommand builds the session subprocess; a seam for tests.
+var execCommand = exec.Command
 
 // LaunchSession executes the aws ssm start-session command for the given instance.
 // It supports both shell and port-forward session types.
@@ -229,8 +262,8 @@ func LaunchSession(opts LaunchOpts) error {
 		))
 	}
 
-	fmt.Printf("running command:> aws %s\n", strings.Join(args, " "))
-	cmd := exec.Command("aws", args...)
+	log.Debug().Str("command", "aws "+strings.Join(args, " ")).Msg("launching session")
+	cmd := execCommand("aws", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -243,7 +276,13 @@ func LaunchSession(opts LaunchOpts) error {
 	restore := ignoreSignals(terminalSignals())
 	defer restore()
 
-	return cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if opts.OnStart != nil && cmd.Process != nil {
+		opts.OnStart(cmd.Process.Pid)
+	}
+	return cmd.Wait()
 }
 
 // ignoreSignals diverts the given signals away from gossm for the duration of

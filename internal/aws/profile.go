@@ -10,13 +10,18 @@ import (
 	"strings"
 )
 
-// ParseAWSProfiles reads ~/.aws/config and returns a list of profile names.
+// ParseAWSProfiles reads the AWS config file and returns a list of
+// profile names. AWS_CONFIG_FILE overrides the default ~/.aws/config
+// location, matching AWS CLI and SDK behaviour.
 func ParseAWSProfiles() ([]string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+	configPath := os.Getenv("AWS_CONFIG_FILE")
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		configPath = filepath.Join(home, ".aws", "config")
 	}
-	configPath := filepath.Join(home, ".aws", "config")
 	f, err := os.Open(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open %s: %w", configPath, err)

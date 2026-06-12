@@ -3,6 +3,9 @@ package aws
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -168,6 +171,94 @@ func TestGetInstances_MockSuccess(t *testing.T) {
 	}
 	if *result.Reservations[0].Instances[0].InstanceId != "i-12345" {
 		t.Errorf("instance id = %q, want %q", *result.Reservations[0].Instances[0].InstanceId, "i-12345")
+	}
+}
+
+// pagingMockEC2API serves successive pages and records the NextToken of
+// each request, so tests can assert the paginator threads tokens through.
+type pagingMockEC2API struct {
+	pages     []*ec2.DescribeInstancesOutput
+	calls     int
+	gotTokens []*string
+}
+
+func (m *pagingMockEC2API) DescribeInstances(_ context.Context, params *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	m.gotTokens = append(m.gotTokens, params.NextToken)
+	if m.calls >= len(m.pages) {
+		return nil, fmt.Errorf("unexpected call %d", m.calls)
+	}
+	out := m.pages[m.calls]
+	m.calls++
+	return out, nil
+}
+
+// TestGetInstances_FollowsPagination verifies all pages are fetched and
+// merged — DescribeInstances caps results per call, so accounts with
+// many instances would otherwise be silently truncated.
+func TestGetInstances_FollowsPagination(t *testing.T) {
+	token := "page-2"
+	api := &pagingMockEC2API{pages: []*ec2.DescribeInstancesOutput{
+		{
+			Reservations: []types.Reservation{
+				{Instances: []types.Instance{{InstanceId: aws.String("i-page1")}}},
+			},
+			NextToken: &token,
+		},
+		{
+			Reservations: []types.Reservation{
+				{Instances: []types.Instance{{InstanceId: aws.String("i-page2")}}},
+			},
+		},
+	}}
+
+	result, err := GetInstances(context.Background(), api, &ec2.DescribeInstancesInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if api.calls != 2 {
+		t.Fatalf("DescribeInstances called %d times, want 2", api.calls)
+	}
+	if api.gotTokens[0] != nil {
+		t.Errorf("first call NextToken = %q, want nil", *api.gotTokens[0])
+	}
+	if api.gotTokens[1] == nil || *api.gotTokens[1] != token {
+		t.Errorf("second call did not pass the page token through")
+	}
+	if len(result.Reservations) != 2 {
+		t.Fatalf("expected 2 merged reservations, got %d", len(result.Reservations))
+	}
+	if *result.Reservations[1].Instances[0].InstanceId != "i-page2" {
+		t.Errorf("second page reservation missing from merged result")
+	}
+}
+
+// TestListInstances_NilState verifies instances with a nil State pointer
+// (possible per the SDK contract) do not panic the listing.
+func TestListInstances_NilState(t *testing.T) {
+	result := &ec2.DescribeInstancesOutput{
+		Reservations: []types.Reservation{
+			{Instances: []types.Instance{{InstanceId: aws.String("i-nostate")}}},
+		},
+	}
+	positions := ListInstances(result, DisplayOptions{})
+	if len(positions) != 1 {
+		t.Fatalf("expected 1 instance position, got %d", len(positions))
+	}
+}
+
+// TestExtractInstances_NilState mirrors the above for the dashboard path.
+func TestExtractInstances_NilState(t *testing.T) {
+	output := &ec2.DescribeInstancesOutput{
+		Reservations: []types.Reservation{
+			{Instances: []types.Instance{{InstanceId: aws.String("i-nostate")}}},
+		},
+	}
+	instances := ExtractInstances(output)
+	if len(instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(instances))
+	}
+	if instances[0].State != "" {
+		t.Errorf("State = %q, want empty for nil State pointer", instances[0].State)
 	}
 }
 
@@ -340,5 +431,48 @@ func TestListInstances_NilFields(t *testing.T) {
 	}
 	if positions[1].InstanceName != "" {
 		t.Errorf("nil tags should yield empty name, got %q", positions[1].InstanceName)
+	}
+}
+
+// --- LaunchSession tests ---
+
+// TestLaunchSession_OnStartReceivesLiveChildPID verifies that OnStart
+// fires with the PID of the aws subprocess while it is still running —
+// not the gossm CLI's own PID, and not after the session has ended —
+// so daemon registration sees a live session.
+func TestLaunchSession_OnStartReceivesLiveChildPID(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "done")
+	orig := execCommand
+	defer func() { execCommand = orig }()
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("sh", "-c", "sleep 0.2; touch "+marker)
+	}
+
+	var gotPID int
+	var markerExistedAtCallback bool
+	err := LaunchSession(LaunchOpts{
+		Profile:    "test",
+		InstanceID: "i-123",
+		Type:       "shell",
+		OnStart: func(pid int) {
+			gotPID = pid
+			_, statErr := os.Stat(marker)
+			markerExistedAtCallback = statErr == nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("LaunchSession: %v", err)
+	}
+	if gotPID <= 0 {
+		t.Fatalf("OnStart pid = %d, want > 0", gotPID)
+	}
+	if gotPID == os.Getpid() {
+		t.Fatal("OnStart received the gossm process PID, want the child subprocess PID")
+	}
+	if markerExistedAtCallback {
+		t.Error("OnStart fired after the child had already exited; must fire while the session is live")
+	}
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Errorf("child did not run to completion: %v", statErr)
 	}
 }
