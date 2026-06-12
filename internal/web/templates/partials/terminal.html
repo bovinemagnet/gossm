@@ -36,8 +36,7 @@
     var proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     var params = new URLSearchParams({
         instance: '{{.InstanceID}}',
-        profile: '{{.Profile}}',
-        token: '{{.Token}}'
+        profile: '{{.Profile}}'
     });
     var ws = new WebSocket(proto + '://' + window.location.host + '/ws/terminal?' + params.toString());
     ws.binaryType = 'arraybuffer';
@@ -56,6 +55,9 @@
     });
 
     ws.onopen = function () {
+        // Authenticate in-band: the token travels in the first frame
+        // rather than the URL so it never lands in request logs.
+        ws.send(JSON.stringify({ t: 'auth', token: '{{.Token}}' }));
         statusEl.textContent = 'connected';
         fit.fit();
         sendResize();

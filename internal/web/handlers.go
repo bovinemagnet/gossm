@@ -146,8 +146,14 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 		sessionType = session.TypePortForward
 	}
 
-	localPort, _ := strconv.Atoi(r.FormValue("local_port"))
-	remotePort, _ := strconv.Atoi(r.FormValue("remote_port"))
+	localPort, lerr := strconv.Atoi(r.FormValue("local_port"))
+	remotePort, rerr := strconv.Atoi(r.FormValue("remote_port"))
+	if sessionType == session.TypePortForward {
+		if lerr != nil || rerr != nil || !validPort(localPort) || !validPort(remotePort) {
+			http.Error(w, "local_port and remote_port must be integers in 1-65535", http.StatusBadRequest)
+			return
+		}
+	}
 
 	opts := session.SessionOpts{
 		InstanceID:   r.FormValue("instance_id"),
@@ -166,6 +172,11 @@ func (s *Server) handleStartSession(w http.ResponseWriter, r *http.Request) {
 
 	// Return the updated session list.
 	s.handleSessionsList(w, r)
+}
+
+// validPort reports whether p is a usable TCP port number.
+func validPort(p int) bool {
+	return p >= 1 && p <= 65535
 }
 
 // handleStopSession extracts the session ID from the path, stops the session,
@@ -375,6 +386,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer s.sse.Unsubscribe(ch)
 
 	ctx := r.Context()
+	rc := http.NewResponseController(w)
 
 	for {
 		select {
@@ -385,7 +397,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			active, stopped := splitSessions(s.sm.ListSessions())
+			// One snapshot per push so the lists and stats agree, and a
+			// write deadline so a stalled browser cannot park this
+			// goroutine forever.
+			all := s.sm.ListSessions()
+			active, stopped := splitSessions(all)
+			_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
 
 			// Render the active session list partial.
 			var activeBuf bytes.Buffer
@@ -403,7 +420,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 			// Render the stats partial.
 			var statsBuf bytes.Buffer
-			data := s.buildDashboardData()
+			data := s.buildDashboardDataFrom(all)
 			if err := s.tmpl.ExecuteTemplate(&statsBuf, "stats.html", data); err == nil {
 				fmt.Fprintf(w, "event: stats\ndata: %s\n\n",
 					strings.ReplaceAll(statsBuf.String(), "\n", "\ndata: "))
@@ -418,7 +435,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // ListSessions is called once and the resulting slice is reused for
 // stats and split lists.
 func (s *Server) buildDashboardData() DashboardData {
-	all := s.sm.ListSessions()
+	return s.buildDashboardDataFrom(s.sm.ListSessions())
+}
+
+// buildDashboardDataFrom assembles the template data from an existing
+// session snapshot, so callers rendering several partials in one pass
+// can keep them consistent.
+func (s *Server) buildDashboardDataFrom(all []session.Session) DashboardData {
 	active, stopped := splitSessions(all)
 	return DashboardData{
 		ActiveSessions:  active,

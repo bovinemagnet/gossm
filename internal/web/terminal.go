@@ -27,9 +27,10 @@ func defaultTerminalCmdBuilder(ctx context.Context, instance, profile string) *e
 
 // termControl is a control message sent by the browser over the text channel.
 type termControl struct {
-	T    string `json:"t"`
-	Cols uint16 `json:"cols"`
-	Rows uint16 `json:"rows"`
+	T     string `json:"t"`
+	Cols  uint16 `json:"cols"`
+	Rows  uint16 `json:"rows"`
+	Token string `json:"token,omitempty"` // auth handshake only
 }
 
 // generateTerminalToken returns a cryptographically random hex token used to

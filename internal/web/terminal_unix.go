@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/bovinemagnet/gossm/internal/session"
 	"github.com/creack/pty"
@@ -19,12 +20,7 @@ import (
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	profile := r.URL.Query().Get("profile")
-	token := r.URL.Query().Get("token")
 
-	if !validToken(token, s.terminalToken) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
 	if instance == "" {
 		http.Error(w, "missing instance", http.StatusBadRequest)
 		return
@@ -36,6 +32,22 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+
+	// The first frame must be an auth control message. The token rides in
+	// the WebSocket payload rather than the URL so it never appears in
+	// request logs or browser history.
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	mt, data, rerr := conn.ReadMessage()
+	if rerr != nil {
+		return
+	}
+	var auth termControl
+	if mt != websocket.TextMessage || json.Unmarshal(data, &auth) != nil ||
+		auth.T != "auth" || !validToken(auth.Token, s.terminalToken) {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("forbidden"))
+		return
+	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := s.termCmdBuilder(ctx, instance, profile)

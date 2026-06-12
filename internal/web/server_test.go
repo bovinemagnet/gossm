@@ -734,6 +734,45 @@ func TestReconnectHandler_MissingSession(t *testing.T) {
 	}
 }
 
+// TestStartSessionHandler_RejectsInvalidPorts verifies that a
+// port-forward launch with missing or out-of-range ports returns 400
+// instead of silently passing port 0 to the aws CLI.
+func TestStartSessionHandler_RejectsInvalidPorts(t *testing.T) {
+	srv, _, calls := testServerWithSleep(t)
+
+	cases := []struct {
+		name       string
+		localPort  string
+		remotePort string
+	}{
+		{"non-numeric local", "abc", "5432"},
+		{"missing local", "", "5432"},
+		{"zero local", "0", "5432"},
+		{"out of range remote", "5432", "70000"},
+		{"negative remote", "5432", "-1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			form := url.Values{}
+			form.Set("type", "port-forward")
+			form.Set("instance_id", "i-ports")
+			form.Set("local_port", c.localPort)
+			form.Set("remote_port", c.remotePort)
+			req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", w.Code)
+			}
+		})
+	}
+	if calls.Load() != 0 {
+		t.Errorf("session subprocess was spawned %d times for invalid ports", calls.Load())
+	}
+}
+
 func TestProbeIntervalHandler_UpdatesSession(t *testing.T) {
 	srv, sm, _ := testServerWithSleep(t)
 

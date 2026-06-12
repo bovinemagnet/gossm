@@ -4,6 +4,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -25,6 +26,32 @@ func dialTerminal(t *testing.T, srv *httptest.Server, query, origin string) (*we
 	return websocket.DefaultDialer.Dial(wsURL, hdr)
 }
 
+// sendAuth performs the in-band auth handshake: the token travels in the
+// first WebSocket frame rather than the URL, so it never lands in logs.
+func sendAuth(t *testing.T, conn *websocket.Conn, token string) {
+	t.Helper()
+	msg := fmt.Sprintf(`{"t":"auth","token":%q}`, token)
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+		t.Fatalf("write auth failed: %v", err)
+	}
+}
+
+// expectClosed asserts the server closes the connection (without echoing
+// any PTY output) within the deadline.
+func expectClosed(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			return // closed, as expected
+		}
+		if strings.Contains(string(data), "$") || strings.Contains(string(data), "hello") {
+			t.Fatalf("received terminal output %q before valid auth", data)
+		}
+	}
+}
+
 // catTerminalServer returns a test server whose terminal sessions run `cat`
 // under a PTY (so input echoes back) with a known token.
 func catTerminalServer(t *testing.T) *httptest.Server {
@@ -43,20 +70,54 @@ func TestTerminalWS_RejectsBadToken(t *testing.T) {
 	srv := catTerminalServer(t)
 	origin := "http://" + strings.TrimPrefix(srv.URL, "http://")
 
-	conn, resp, err := dialTerminal(t, srv, "instance=i-x&token=wrong", origin)
-	if err == nil {
-		conn.Close()
-		t.Fatal("expected handshake failure for bad token")
+	conn, _, err := dialTerminal(t, srv, "instance=i-x", origin)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
 	}
-	if resp == nil || resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status = %v, want 403", resp)
+	defer conn.Close()
+
+	sendAuth(t, conn, "wrong")
+	expectClosed(t, conn)
+}
+
+func TestTerminalWS_RejectsMissingAuth(t *testing.T) {
+	srv := catTerminalServer(t)
+	origin := "http://" + strings.TrimPrefix(srv.URL, "http://")
+
+	conn, _, err := dialTerminal(t, srv, "instance=i-x", origin)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
 	}
+	defer conn.Close()
+
+	// First frame is terminal input rather than an auth message.
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("hello\n")); err != nil {
+		t.Fatalf("write input failed: %v", err)
+	}
+	expectClosed(t, conn)
+}
+
+func TestTerminalWS_IgnoresQueryStringToken(t *testing.T) {
+	srv := catTerminalServer(t)
+	origin := "http://" + strings.TrimPrefix(srv.URL, "http://")
+
+	// A token in the URL must no longer authenticate the connection.
+	conn, _, err := dialTerminal(t, srv, "instance=i-x&token=secret-token", origin)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("hello\n")); err != nil {
+		t.Fatalf("write input failed: %v", err)
+	}
+	expectClosed(t, conn)
 }
 
 func TestTerminalWS_RejectsBadOrigin(t *testing.T) {
 	srv := catTerminalServer(t)
 
-	conn, resp, err := dialTerminal(t, srv, "instance=i-x&token=secret-token", "http://evil.example")
+	conn, resp, err := dialTerminal(t, srv, "instance=i-x", "http://evil.example")
 	if err == nil {
 		conn.Close()
 		t.Fatal("expected handshake failure for bad origin")
@@ -70,11 +131,13 @@ func TestTerminalWS_EchoRoundtrip(t *testing.T) {
 	srv := catTerminalServer(t)
 	origin := "http://" + strings.TrimPrefix(srv.URL, "http://")
 
-	conn, _, err := dialTerminal(t, srv, "instance=i-echo&token=secret-token", origin)
+	conn, _, err := dialTerminal(t, srv, "instance=i-echo", origin)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
+
+	sendAuth(t, conn, "secret-token")
 
 	// Send a resize control message (text frame) — should be absorbed silently.
 	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"t":"resize","cols":100,"rows":30}`)); err != nil {
@@ -113,11 +176,13 @@ func TestTerminalWS_RegistersSession(t *testing.T) {
 	t.Cleanup(srv.Close)
 	origin := "http://" + strings.TrimPrefix(srv.URL, "http://")
 
-	conn, _, err := dialTerminal(t, srv, "instance=i-reg&token=secret-token&profile=prod", origin)
+	conn, _, err := dialTerminal(t, srv, "instance=i-reg&profile=prod", origin)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
+
+	sendAuth(t, conn, "secret-token")
 
 	// The session should appear in the manager as a running shell.
 	deadline := time.Now().Add(2 * time.Second)
