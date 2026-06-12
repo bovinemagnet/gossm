@@ -125,21 +125,18 @@ func runConnect(cmd *cobra.Command, args []string) {
 		ShowPrivateIP:        connectShowIP,
 	}
 
-	instancePositions := awsutil.ListInstances(combinedResult, opts)
+	instances := awsutil.ExtractInstances(combinedResult)
 
-	if len(instancePositions) == 0 {
+	if len(instances) == 0 {
 		fmt.Println("No running instances found.")
 		return
 	}
 
-	launchNumber, err := awsutil.PromptUser(scanner, len(instancePositions))
+	selected, err := awsutil.PromptInstance(scanner, instances, opts)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-
-	selected := instancePositions[launchNumber]
-	log.Info().Msg("Selected Instance: " + selected.InstanceID)
 
 	launchOpts := awsutil.LaunchOpts{
 		Profile:    connectProfile,
