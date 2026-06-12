@@ -20,10 +20,10 @@ type recordingBuilder struct {
 
 func (b *recordingBuilder) Builder() CommandBuilder {
 	return func(ctx context.Context, opts SessionOpts) *exec.Cmd {
-		atomic.AddInt32(&b.calls, 1)
+		n := atomic.AddInt32(&b.calls, 1)
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		idx := int(atomic.LoadInt32(&b.calls)) - 1
+		idx := int(n) - 1
 		if idx < len(b.fns) && b.fns[idx] != nil {
 			return b.fns[idx](ctx)
 		}
@@ -365,6 +365,135 @@ func TestEffectiveProbeInterval_FallsBackToDefault(t *testing.T) {
 	if got := sm.EffectiveProbeInterval(id); got != 7*time.Second {
 		t.Errorf("EffectiveProbeInterval = %v, want 7s (manager default)", got)
 	}
+}
+
+// TestStopSession_DuringReconnect_DoesNotResurrect verifies that a
+// StopSession call landing while runReconnectLoop is mid-respawn does
+// not get clobbered by the loop installing the new subprocess and
+// setting the session back to StateRunning.
+func TestStopSession_DuringReconnect_DoesNotResurrect(t *testing.T) {
+	b := &recordingBuilder{}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	// Initial subprocess crashes immediately to trigger a reconnect.
+	quickExitBuilder(b)
+	// The reconnect build blocks until the test has called StopSession,
+	// putting the stop squarely inside the respawn window.
+	b.fns = append(b.fns, func(ctx context.Context) *exec.Cmd {
+		close(entered)
+		<-release
+		return exec.CommandContext(ctx, "sleep", "3600")
+	})
+
+	sm := New(b.Builder(), nil)
+	sm.SetReconnectPolicy(1, 5, time.Millisecond, 5*time.Millisecond)
+	sm.SetSleeper(func(time.Duration) {})
+	defer sm.Close()
+	sm.SetProbe(nil, 0, 0)
+
+	id, err := sm.StartSession(portForwardOpts("stop-during-reconn", 13310))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	<-entered // reconnect loop is now mid-respawn
+	if err := sm.StopSession(id); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	var state SessionState
+	for time.Now().Before(deadline) {
+		s, _ := sm.GetSession(id)
+		state = s.State
+		if state == StateStopped {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if state != StateStopped {
+		t.Fatalf("state = %d, want StateStopped (stop during reconnect must not resurrect the session)", state)
+	}
+}
+
+// TestManualReconnect_AfterErrored_ResumesProbing verifies that a
+// session revived via manual reconnect after reaching StateErrored gets
+// its liveness probe back. The probe goroutine exits permanently when
+// it observes StateErrored, so the reconnect path must respawn it.
+func TestManualReconnect_AfterErrored_ResumesProbing(t *testing.T) {
+	b := &recordingBuilder{}
+	// Initial spawn succeeds.
+	b.fns = append(b.fns, func(ctx context.Context) *exec.Cmd {
+		return exec.CommandContext(ctx, "sleep", "3600")
+	})
+	// First reconnect attempt fails to start → StateErrored (max=1).
+	b.fns = append(b.fns, func(ctx context.Context) *exec.Cmd {
+		return exec.CommandContext(ctx, "/this/binary/does/not/exist")
+	})
+	// Second manual reconnect succeeds.
+	b.fns = append(b.fns, func(ctx context.Context) *exec.Cmd {
+		return exec.CommandContext(ctx, "sleep", "3600")
+	})
+
+	var probes atomic.Int32
+	sm := New(b.Builder(), nil)
+	sm.SetReconnectPolicy(1, 1, time.Millisecond, 5*time.Millisecond)
+	sm.SetSleeper(func(time.Duration) {})
+	defer sm.Close()
+	sm.SetProbe(func(ctx context.Context, s *Session) bool {
+		probes.Add(1)
+		return true
+	}, 20*time.Millisecond, 50*time.Millisecond)
+
+	id, err := sm.StartSession(portForwardOpts("probe-resume", 13311))
+	if err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+
+	// Exhaust attempts → StateErrored.
+	if err := sm.ManualReconnect(id); err != nil {
+		t.Fatalf("ManualReconnect: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s, _ := sm.GetSession(id)
+		if s.State == StateErrored {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Let the probe goroutine observe StateErrored and exit.
+	time.Sleep(100 * time.Millisecond)
+
+	// Revive the session.
+	if err := sm.ManualReconnect(id); err != nil {
+		t.Fatalf("second ManualReconnect: %v", err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s, _ := sm.GetSession(id)
+		if s.State == StateRunning {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s, _ := sm.GetSession(id)
+	if s.State != StateRunning {
+		t.Fatalf("state = %d, want StateRunning after manual reconnect", s.State)
+	}
+
+	// Probing must resume on the revived session.
+	baseline := probes.Load()
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if probes.Load() > baseline {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no probes after manual reconnect from StateErrored (probe goroutine was not respawned)")
 }
 
 // TestReconnect_OnStall_RespawnsSubprocess verifies that a stalled

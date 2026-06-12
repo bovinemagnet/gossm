@@ -503,10 +503,21 @@ func (m *SessionManager) emit(e SessionEvent) {
 // runtime per-session updates via SetSessionProbeInterval take effect
 // without restarting the goroutine.
 func (m *SessionManager) monitorProbe(s *Session) {
-	m.mu.RLock()
+	m.mu.Lock()
+	if s.probeInFlight {
+		m.mu.Unlock()
+		return
+	}
+	s.probeInFlight = true
 	prober := m.prober
 	timeout := m.probeTimeout
-	m.mu.RUnlock()
+	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		s.probeInFlight = false
+		m.mu.Unlock()
+	}()
 
 	if prober == nil {
 		return
@@ -667,7 +678,15 @@ func (m *SessionManager) runReconnectLoop(s *Session) {
 
 	for {
 		m.mu.Lock()
-		if s.State == StateStopping || s.State == StateStopped {
+		if s.State == StateStopping {
+			// The old subprocess was already cancelled and reaped before
+			// this iteration, so nothing else will record the stop.
+			s.State = StateStopped
+			m.mu.Unlock()
+			m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+			return
+		}
+		if s.State == StateStopped {
 			m.mu.Unlock()
 			return
 		}
@@ -728,9 +747,25 @@ func (m *SessionManager) runReconnectLoop(s *Session) {
 			continue
 		}
 
-		// Success — install the new subprocess on the session.
+		// Success — install the new subprocess on the session, unless a
+		// stop or removal arrived while we were respawning. In that case
+		// kill the fresh subprocess rather than resurrecting the session.
 		newWaitDone := make(chan struct{})
 		m.mu.Lock()
+		_, exists := m.sessions[s.ID]
+		if s.State == StateStopping || s.State == StateStopped || !exists {
+			if s.State == StateStopping {
+				s.State = StateStopped
+			}
+			m.mu.Unlock()
+			cancel()
+			if newCmd.Process != nil {
+				_ = newCmd.Process.Kill()
+			}
+			_ = newCmd.Wait()
+			m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
+			return
+		}
 		s.cmd = newCmd
 		s.cancel = cancel
 		s.waitDone = newWaitDone
@@ -744,6 +779,13 @@ func (m *SessionManager) runReconnectLoop(s *Session) {
 		m.emit(SessionEvent{Type: "updated", SessionID: s.ID, Timestamp: time.Now()})
 
 		go m.monitor(s, newCmd, newWaitDone)
+		// Restore liveness probing. The probe goroutine exits permanently
+		// when it observes a terminal state (e.g. StateErrored before a
+		// manual reconnect); probeInFlight makes this a no-op when the
+		// original goroutine is still running.
+		if s.Type == TypePortForward {
+			go m.monitorProbe(s)
+		}
 		return
 	}
 }

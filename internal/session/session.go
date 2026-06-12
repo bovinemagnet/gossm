@@ -50,6 +50,7 @@ type Session struct {
 	LastReconnectAt     time.Time     // timestamp of the most recent reconnect attempt
 	consecutiveFailures int  // consecutive failed probes since the last success
 	reconnectInFlight   bool // guarded by SessionManager.mu; true while a reconnect cycle is running
+	probeInFlight       bool // guarded by SessionManager.mu; true while a monitorProbe goroutine is running
 	cmd                 *exec.Cmd
 	cancel              context.CancelFunc
 	waitDone            chan struct{} // closed when cmd.Wait() completes in monitor
