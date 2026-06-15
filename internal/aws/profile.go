@@ -42,7 +42,24 @@ func ParseAWSProfiles() ([]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("error reading %s: %w", configPath, err)
 	}
-	return profiles, nil
+	return dedupeProfiles(profiles), nil
+}
+
+// dedupeProfiles collapses profile names that differ only by case (commonly
+// aliases pointing at the same account, e.g. "ACU" and "acu"), keeping the
+// first occurrence so the file's casing and ordering are preserved.
+func dedupeProfiles(profiles []string) []string {
+	seen := make(map[string]bool, len(profiles))
+	deduped := profiles[:0]
+	for _, p := range profiles {
+		key := strings.ToLower(p)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, p)
+	}
+	return deduped
 }
 
 // PromptProfile displays available AWS profiles and lets the user pick one,

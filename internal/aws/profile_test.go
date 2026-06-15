@@ -39,6 +39,34 @@ func TestParseAWSProfiles_HonoursAWSConfigFile(t *testing.T) {
 	}
 }
 
+// TestParseAWSProfiles_DedupesCaseInsensitiveAliases verifies that profiles
+// differing only by case (e.g. ACU and acu, which are commonly defined as
+// aliases pointing at the same account) collapse to a single entry, keeping
+// the casing of the first occurrence in the config file.
+func TestParseAWSProfiles_DedupesCaseInsensitiveAliases(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "custom-config")
+	content := "[default]\n\n[profile ACU]\nregion = ap-southeast-2\n\n[profile acu]\nregion = ap-southeast-2\n\n[profile UQ]\n\n[profile uq]\n\n[profile Unique]\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", configPath)
+
+	profiles, err := ParseAWSProfiles()
+	if err != nil {
+		t.Fatalf("ParseAWSProfiles: %v", err)
+	}
+
+	want := []string{"default", "ACU", "UQ", "Unique"}
+	if len(profiles) != len(want) {
+		t.Fatalf("got %d profiles %v, want %d %v", len(profiles), profiles, len(want), want)
+	}
+	for i, name := range want {
+		if profiles[i] != name {
+			t.Errorf("profiles[%d] = %q, want %q (full list %v)", i, profiles[i], name, profiles)
+		}
+	}
+}
+
 func TestPromptProfileFrom_DirectSelection(t *testing.T) {
 	profiles := []string{"default", "prd-web", "dev-web"}
 	scanner := bufio.NewScanner(strings.NewReader("2\n"))
