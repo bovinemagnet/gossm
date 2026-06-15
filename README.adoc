@@ -40,10 +40,10 @@ gossm connect prd web
 [1]   i-AAAAAAAAAAAAAAAAA    svr1.example.com <1>
 [2]   i-BBBBBBBBBBBBBBBBBB   svr2.example.com
 [3]   i-CCCCCCCCCCCCCCCCCC   svr3.example.com
-Launch number:> 2 <2>
+Launch number: [number, text:filter, Q/q:Quit] > 2 <2>
 ----
 <1> The list of instances to pick from.
-<2> The command prompt to enter the number representing the list above.
+<2> Type a number to select, or type text to filter the list before selecting.
 
 Once you select the instance, gossm launches the session via: `aws --profile <profile> ssm start-session --target <instance-id>`
 

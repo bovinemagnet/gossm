@@ -232,21 +232,8 @@ func TestGetInstances_FollowsPagination(t *testing.T) {
 	}
 }
 
-// TestListInstances_NilState verifies instances with a nil State pointer
-// (possible per the SDK contract) do not panic the listing.
-func TestListInstances_NilState(t *testing.T) {
-	result := &ec2.DescribeInstancesOutput{
-		Reservations: []types.Reservation{
-			{Instances: []types.Instance{{InstanceId: aws.String("i-nostate")}}},
-		},
-	}
-	positions := ListInstances(result, DisplayOptions{})
-	if len(positions) != 1 {
-		t.Fatalf("expected 1 instance position, got %d", len(positions))
-	}
-}
-
-// TestExtractInstances_NilState mirrors the above for the dashboard path.
+// TestExtractInstances_NilState verifies instances with a nil State pointer
+// (possible per the SDK contract) do not panic and yield an empty state.
 func TestExtractInstances_NilState(t *testing.T) {
 	output := &ec2.DescribeInstancesOutput{
 		Reservations: []types.Reservation{
@@ -366,71 +353,6 @@ func TestExtractInstances_NilOutput(t *testing.T) {
 	instances := ExtractInstances(nil)
 	if instances != nil {
 		t.Errorf("expected nil, got %v", instances)
-	}
-}
-
-// --- ListInstances tests ---
-
-func TestListInstances_ReturnsCorrectPositions(t *testing.T) {
-	output := &ec2.DescribeInstancesOutput{
-		Reservations: []types.Reservation{
-			{
-				Instances: []types.Instance{
-					{
-						InstanceId: aws.String("i-aaa"),
-						Tags:       []types.Tag{{Key: aws.String("Name"), Value: aws.String("alpha")}},
-						State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
-					},
-					{
-						InstanceId: aws.String("i-bbb"),
-						Tags:       []types.Tag{{Key: aws.String("Name"), Value: aws.String("bravo")}},
-						State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
-					},
-				},
-			},
-		},
-	}
-	positions := ListInstances(output, DisplayOptions{})
-	if len(positions) != 2 {
-		t.Fatalf("expected 2 positions, got %d", len(positions))
-	}
-	if positions[1].InstanceID != "i-aaa" {
-		t.Errorf("position 1 instance id = %q, want %q", positions[1].InstanceID, "i-aaa")
-	}
-	if positions[1].InstanceName != "alpha" {
-		t.Errorf("position 1 name = %q, want %q", positions[1].InstanceName, "alpha")
-	}
-	if positions[2].InstanceID != "i-bbb" {
-		t.Errorf("position 2 instance id = %q, want %q", positions[2].InstanceID, "i-bbb")
-	}
-	if positions[2].ReservationCount != 1 {
-		t.Errorf("position 2 reservation count = %d, want 1", positions[2].ReservationCount)
-	}
-}
-
-func TestListInstances_NilFields(t *testing.T) {
-	output := &ec2.DescribeInstancesOutput{
-		Reservations: []types.Reservation{
-			{
-				Instances: []types.Instance{
-					{
-						InstanceId: nil,
-						Tags:       nil,
-						State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
-					},
-				},
-			},
-		},
-	}
-	positions := ListInstances(output, DisplayOptions{})
-	if len(positions) != 1 {
-		t.Fatalf("expected 1 position, got %d", len(positions))
-	}
-	if positions[1].InstanceID != "N/A" {
-		t.Errorf("nil instance id should show %q, got %q", "N/A", positions[1].InstanceID)
-	}
-	if positions[1].InstanceName != "" {
-		t.Errorf("nil tags should yield empty name, got %q", positions[1].InstanceName)
 	}
 }
 
