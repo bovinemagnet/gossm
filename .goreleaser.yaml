@@ -117,7 +117,10 @@ changelog:
     - title: Others
       order: 999
 
-# Homebrew cask configuration (replaces deprecated 'brews')
+# Homebrew cask, published to the bovinemagnet/homebrew-tap repository.
+# Installs via: brew tap bovinemagnet/tap && brew install --cask gossm
+# GoReleaser dropped formula (`brews`) generation in v2.16; casks are the
+# supported path for distributing pre-built binaries via Homebrew.
 homebrew_casks:
   - name: gossm
     ids:
@@ -129,8 +132,17 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/bovinemagnet/gossm"
-    description: "Tool to connect to aws resources."
-    license: "MIT"
+    description: "CLI and daemon for managing AWS SSM sessions with an HTMX dashboard"
+    license: "GPL-3.0-only"
+    commit_author:
+      name: Paul Snow
+      email: bovinemagnet@gmail.com
+    # gossm shells out to `aws ssm start-session`, which needs both the AWS CLI
+    # and the Session Manager plugin. A cask can depend on both a formula and a
+    # cask, so both install automatically.
+    dependencies:
+      - formula: awscli
+      - cask: session-manager-plugin
 
 release:
   github:

@@ -4,9 +4,22 @@ A CLI tool and daemon for managing AWS SSM sessions. Lists EC2 instances, launch
 
 Written in Go, gossm utilises the `~/.aws/config` file to launch sessions via https://docs.aws.amazon.com/systems-manager/index.html[AWS Systems Manager].
 
-== Simple Install
+== Install
 
-To grab the latest build from GitHub:
+=== Homebrew (macOS and Linux)
+
+gossm is distributed as a Homebrew cask (it ships pre-compiled binaries). The
+cask pulls in the `aws` CLI and the Session Manager plugin automatically.
+
+[source,bash]
+----
+brew tap bovinemagnet/tap
+brew install --cask gossm
+----
+
+=== go install
+
+To build the latest source from GitHub:
 
 [source,bash]
 ----
