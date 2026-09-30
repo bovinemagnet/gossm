@@ -196,3 +196,46 @@ func TestTerminalWS_RegistersSession(t *testing.T) {
 	}
 	t.Fatal("terminal session was not registered with the manager")
 }
+
+func TestTerminalWS_CountsTraffic(t *testing.T) {
+	s := testServer(t)
+	s.terminalToken = "secret-token"
+	s.termCmdBuilder = func(ctx context.Context, instance, profile string) *exec.Cmd {
+		return exec.CommandContext(ctx, "cat")
+	}
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	origin := "http://" + strings.TrimPrefix(srv.URL, "http://")
+
+	conn, _, err := dialTerminal(t, srv, "instance=i-traffic", origin)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	sendAuth(t, conn, "secret-token")
+	// Resize control frames are not terminal traffic.
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"t":"resize","cols":100,"rows":30}`)); err != nil {
+		t.Fatalf("write resize failed: %v", err)
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("hello\n")); err != nil {
+		t.Fatalf("write input failed: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, sess := range s.sm.ListSessions() {
+			// cat under a PTY echoes the input, so bytes flow both ways.
+			if sess.InstanceID == "i-traffic" && sess.BytesOut == 6 && sess.BytesIn >= 5 {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, sess := range s.sm.ListSessions() {
+		if sess.InstanceID == "i-traffic" {
+			t.Fatalf("traffic = in %d / out %d, want out 6 and in >= 5", sess.BytesIn, sess.BytesOut)
+		}
+	}
+	t.Fatal("terminal session was not registered with the manager")
+}

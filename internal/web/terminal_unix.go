@@ -75,6 +75,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		for {
 			n, rerr := ptmx.Read(buf)
 			if n > 0 {
+				s.sm.AddTraffic(id, int64(n), 0)
 				if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
 					return
 				}
@@ -101,7 +102,9 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if _, werr := ptmx.Write(data); werr != nil {
+		n, werr := ptmx.Write(data)
+		s.sm.AddTraffic(id, 0, int64(n))
+		if werr != nil {
 			return
 		}
 	}

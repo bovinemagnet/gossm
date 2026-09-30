@@ -89,7 +89,7 @@ func ReadPID(cfg *config.Config) (int, error) {
 }
 
 // Start creates a new Daemon, starts the SessionManager and IPC server, writes
-// the PID file, and begins periodic spark-point recording.
+// the PID file, and begins periodic history recording.
 func Start(cfg *config.Config) (*Daemon, error) {
 	// Claim the PID file first — it is the mutual-exclusion lock. Only
 	// then is it safe to evict a stale socket in NewIPCServer.
@@ -123,14 +123,14 @@ func Start(cfg *config.Config) (*Daemon, error) {
 	d.ipc = ipc
 	ipc.Serve()
 
-	// Periodically record spark data points.
+	// Periodically record history chart samples.
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(session.HistoryInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				sm.RecordSparkPoint()
+				sm.RecordHistoryPoint()
 			case <-d.stopCh:
 				return
 			}
@@ -142,7 +142,7 @@ func Start(cfg *config.Config) (*Daemon, error) {
 
 // Stop shuts down the daemon: closes sessions, stops IPC, and cleans up files.
 func (d *Daemon) Stop() error {
-	// Signal the spark-point goroutine to exit.
+	// Signal the history goroutine to exit.
 	select {
 	case <-d.stopCh:
 		// Already closed.

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,7 +41,8 @@ type DashboardData struct {
 	SessionCount    int
 	Uptime          string
 	Port            int
-	SparkSVG        template.HTML
+	HistorySVG      template.HTML
+	TrafficSVG      template.HTML
 	Presets         []config.SessionPreset
 	LastUpdate      string
 	TerminalToken   string
@@ -443,6 +443,7 @@ func (s *Server) buildDashboardData() DashboardData {
 // can keep them consistent.
 func (s *Server) buildDashboardDataFrom(all []session.Session) DashboardData {
 	active, stopped := splitSessions(all)
+	history := s.sm.History()
 	return DashboardData{
 		ActiveSessions:  active,
 		StoppedSessions: stopped,
@@ -450,93 +451,167 @@ func (s *Server) buildDashboardDataFrom(all []session.Session) DashboardData {
 		SessionCount:    len(active),
 		Uptime:          uptimeSince(s.startedAt),
 		Port:            s.cfg.DashboardPort,
-		SparkSVG:        template.HTML(renderSparkSVG(s.sm.SparkData())),
+		HistorySVG:      template.HTML(renderHistorySVG(history)),
+		TrafficSVG:      template.HTML(renderTrafficSVG(history)),
 		Presets:         s.cfg.Presets,
 		LastUpdate:      time.Now().Format("15:04:05"),
 		TerminalToken:   s.terminalToken,
 	}
 }
 
-// renderSparkSVG generates an inline SVG chart from sparkline data,
-// sized to fill the dashboard history panel. The SVG renders horizontal
-// grid lines, a soft area fill, and a polyline.
-func renderSparkSVG(data []int) string {
-	if len(data) == 0 {
+// History chart geometry, sized to fill the dashboard history panel.
+const (
+	chartWidth     = 880.0
+	chartHeight    = 132.0
+	chartPadTop    = 10.0
+	chartPadBottom = 18.0
+	chartPadLeft   = 6.0
+	chartPadRight  = 6.0
+	chartGridLines = 4
+)
+
+// chartScale maps sample indices and values onto the chart area.
+type chartScale struct {
+	n   int     // number of samples
+	max float64 // value drawn at the top of the chart
+}
+
+func (c chartScale) x(i int) float64 {
+	if c.n < 2 {
+		return chartPadLeft
+	}
+	return chartPadLeft + float64(i)*(chartWidth-chartPadLeft-chartPadRight)/float64(c.n-1)
+}
+
+func (c chartScale) y(v float64) float64 {
+	drawHeight := chartHeight - chartPadTop - chartPadBottom
+	return chartPadTop + drawHeight - (v/c.max)*drawHeight
+}
+
+// line returns the polyline points for values.
+func (c chartScale) line(values []float64) string {
+	var b strings.Builder
+	for i, v := range values {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		fmt.Fprintf(&b, "%.1f,%.1f", c.x(i), c.y(v))
+	}
+	return b.String()
+}
+
+// band returns polygon points for the area between lower and upper.
+func (c chartScale) band(lower, upper []float64) string {
+	var b strings.Builder
+	b.WriteString(c.line(upper))
+	for i := len(lower) - 1; i >= 0; i-- {
+		fmt.Fprintf(&b, " %.1f,%.1f", c.x(i), c.y(lower[i]))
+	}
+	return b.String()
+}
+
+// chartSVG wraps chart layers in an SVG with grid lines and 0/max labels.
+func chartSVG(ariaLabel, maxLabel, layers string) string {
+	drawHeight := chartHeight - chartPadTop - chartPadBottom
+	var grid strings.Builder
+	for i := 0; i <= chartGridLines; i++ {
+		y := chartPadTop + (drawHeight/float64(chartGridLines))*float64(i)
+		fmt.Fprintf(&grid,
+			`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#2b3a55" stroke-width="0.6" stroke-dasharray="2 4"/>`,
+			chartPadLeft, y, chartWidth-chartPadRight, y)
+	}
+	return fmt.Sprintf(
+		`<svg viewBox="0 0 %.0f %.0f" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="%s">`+
+			`%s%s`+
+			`<text x="%.1f" y="%.1f" fill="#64748b" font-size="10" font-family="ui-monospace, Menlo, monospace">0</text>`+
+			`<text x="%.1f" y="%.1f" fill="#64748b" font-size="10" font-family="ui-monospace, Menlo, monospace" text-anchor="end">%s</text>`+
+			`</svg>`,
+		chartWidth, chartHeight, template.HTMLEscapeString(ariaLabel),
+		grid.String(), layers,
+		chartPadLeft, chartHeight-chartPadBottom+12,
+		chartWidth-chartPadRight, chartHeight-chartPadBottom+12,
+		template.HTMLEscapeString(maxLabel),
+	)
+}
+
+// renderHistorySVG draws active sessions over the last hour as a stacked
+// area chart: tunnels on the bottom, shells stacked on top.
+func renderHistorySVG(points []session.HistoryPoint) string {
+	if len(points) == 0 {
 		return ""
 	}
 
-	maxVal := 0
-	for _, v := range data {
-		if v > maxVal {
-			maxVal = v
+	zero := make([]float64, len(points))
+	tunnels := make([]float64, len(points))
+	total := make([]float64, len(points))
+	maxVal := 1
+	for i, p := range points {
+		tunnels[i] = float64(p.Tunnels)
+		total[i] = float64(p.Tunnels + p.Shells)
+		if p.Tunnels+p.Shells > maxVal {
+			maxVal = p.Tunnels + p.Shells
 		}
+	}
+	c := chartScale{n: len(points), max: float64(maxVal)}
+
+	layers := fmt.Sprintf(
+		`<g class="history-tunnels">`+
+			`<polygon points="%s" fill="#34d399" fill-opacity="0.28" stroke="none"/>`+
+			`<polyline points="%s" fill="none" stroke="#34d399" stroke-width="1.6" stroke-linejoin="round"/>`+
+			`</g>`+
+			`<g class="history-shells">`+
+			`<polygon points="%s" fill="#818cf8" fill-opacity="0.28" stroke="none"/>`+
+			`<polyline points="%s" fill="none" stroke="#818cf8" stroke-width="1.6" stroke-linejoin="round"/>`+
+			`</g>`,
+		c.band(zero, tunnels), c.line(tunnels),
+		c.band(tunnels, total), c.line(total),
+	)
+	return chartSVG("Active sessions by type (last 60 minutes)", strconv.Itoa(maxVal), layers)
+}
+
+// renderTrafficSVG draws web-terminal bytes received and sent per sample
+// over the last hour. It returns "" when there has been no traffic so the
+// template can show a placeholder instead of a flat chart.
+func renderTrafficSVG(points []session.HistoryPoint) string {
+	in := make([]float64, len(points))
+	out := make([]float64, len(points))
+	var maxVal int64
+	for i, p := range points {
+		in[i] = float64(p.BytesIn)
+		out[i] = float64(p.BytesOut)
+		maxVal = max(maxVal, p.BytesIn, p.BytesOut)
 	}
 	if maxVal == 0 {
-		maxVal = 1
+		return ""
 	}
+	c := chartScale{n: len(points), max: float64(maxVal)}
 
-	const (
-		width        = 880.0
-		height       = 132.0
-		padTop       = 10.0
-		padBottom    = 18.0
-		padLeft      = 6.0
-		padRight     = 6.0
-		gridLines    = 4
+	zero := make([]float64, len(points))
+	layers := fmt.Sprintf(
+		`<g class="traffic-in">`+
+			`<polygon points="%s" fill="#38bdf8" fill-opacity="0.25" stroke="none"/>`+
+			`<polyline points="%s" fill="none" stroke="#38bdf8" stroke-width="1.6" stroke-linejoin="round"/>`+
+			`</g>`+
+			`<g class="traffic-out">`+
+			`<polyline points="%s" fill="none" stroke="#f472b6" stroke-width="1.6" stroke-linejoin="round"/>`+
+			`</g>`,
+		c.band(zero, in), c.line(in), c.line(out),
 	)
-	drawHeight := height - padTop - padBottom
-	drawWidth := width - padLeft - padRight
+	return chartSVG("Web terminal traffic per minute (last 60 minutes)", formatBytes(maxVal), layers)
+}
 
-	step := drawWidth / float64(len(data)-1)
-	if len(data) == 1 {
-		step = 0
+// formatBytes renders a byte count with a binary unit, e.g. "1.5 KB".
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
 	}
-
-	var points strings.Builder
-	var area strings.Builder
-	fmt.Fprintf(&area, "%.1f,%.1f ", padLeft, padTop+drawHeight)
-	for i, v := range data {
-		x := padLeft + float64(i)*step
-		y := padTop + drawHeight - (float64(v)/float64(maxVal))*drawHeight
-		if math.IsNaN(y) {
-			y = padTop + drawHeight
-		}
-		if i > 0 {
-			points.WriteString(" ")
-		}
-		fmt.Fprintf(&points, "%.1f,%.1f", x, y)
-		fmt.Fprintf(&area, "%.1f,%.1f ", x, y)
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit && exp < 2; m /= unit {
+		div *= unit
+		exp++
 	}
-	fmt.Fprintf(&area, "%.1f,%.1f", padLeft+float64(len(data)-1)*step, padTop+drawHeight)
-
-	var grid strings.Builder
-	for i := 0; i <= gridLines; i++ {
-		y := padTop + (drawHeight/float64(gridLines))*float64(i)
-		fmt.Fprintf(&grid,
-			`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#2b3a55" stroke-width="0.6" stroke-dasharray="2 4"/>`,
-			padLeft, y, padLeft+drawWidth, y)
-	}
-
-	return fmt.Sprintf(
-		`<svg viewBox="0 0 %.0f %.0f" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Session history (last 60 minutes)">`+
-			`<defs><linearGradient id="spark-fill" x1="0" y1="0" x2="0" y2="1">`+
-			`<stop offset="0%%" stop-color="#38bdf8" stop-opacity="0.45"/>`+
-			`<stop offset="100%%" stop-color="#38bdf8" stop-opacity="0"/>`+
-			`</linearGradient></defs>`+
-			`%s`+
-			`<polygon points="%s" fill="url(#spark-fill)" stroke="none"/>`+
-			`<polyline fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="%s"/>`+
-			`<text x="%.1f" y="%.1f" fill="#64748b" font-size="10" font-family="ui-monospace, Menlo, monospace">0</text>`+
-			`<text x="%.1f" y="%.1f" fill="#64748b" font-size="10" font-family="ui-monospace, Menlo, monospace" text-anchor="end">%d</text>`+
-			`</svg>`,
-		width, height,
-		grid.String(),
-		area.String(),
-		points.String(),
-		padLeft, padTop+drawHeight+12,
-		padLeft+drawWidth, padTop+drawHeight+12,
-		maxVal,
-	)
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMG"[exp])
 }
 
 // sessionStateClass returns the lowercase state slug used as a CSS
@@ -620,12 +695,7 @@ func sessionStateName(state session.SessionState) string {
 // isActiveState returns true for states that represent a live or
 // recovering session (i.e. not Stopped/Errored).
 func isActiveState(state session.SessionState) bool {
-	switch state {
-	case session.StateStarting, session.StateRunning, session.StateStopping,
-		session.StateStalled, session.StateReconnecting:
-		return true
-	}
-	return false
+	return state.IsActive()
 }
 
 // sessionTypeName returns a human-readable label for a session type.

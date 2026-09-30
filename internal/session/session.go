@@ -27,6 +27,16 @@ const (
 	StateReconnecting
 )
 
+// IsActive reports whether a session in this state still occupies a live
+// (or recovering) connection.
+func (st SessionState) IsActive() bool {
+	switch st {
+	case StateStarting, StateRunning, StateStopping, StateStalled, StateReconnecting:
+		return true
+	}
+	return false
+}
+
 // Session represents a single SSM session, including the underlying
 // subprocess that drives it.
 type Session struct {
@@ -48,12 +58,22 @@ type Session struct {
 	Reconnectable       bool          // true if the manager owns the subprocess and may respawn it
 	ReconnectAttempts   int           // attempts in the current failure cycle; resets on probe success
 	LastReconnectAt     time.Time     // timestamp of the most recent reconnect attempt
+	BytesIn             int64         // bytes received from the instance (web terminal shells only)
+	BytesOut            int64         // bytes sent to the instance (web terminal shells only)
 	consecutiveFailures int  // consecutive failed probes since the last success
 	reconnectInFlight   bool // guarded by SessionManager.mu; true while a reconnect cycle is running
 	probeInFlight       bool // guarded by SessionManager.mu; true while a monitorProbe goroutine is running
 	cmd                 *exec.Cmd
 	cancel              context.CancelFunc
 	waitDone            chan struct{} // closed when cmd.Wait() completes in monitor
+}
+
+// HistoryPoint is one sample of the dashboard history chart.
+type HistoryPoint struct {
+	Shells   int   // active shell sessions at sample time
+	Tunnels  int   // active port-forward sessions at sample time
+	BytesIn  int64 // shell bytes received since the previous sample
+	BytesOut int64 // shell bytes sent since the previous sample
 }
 
 // SessionEvent is emitted whenever the session registry changes.

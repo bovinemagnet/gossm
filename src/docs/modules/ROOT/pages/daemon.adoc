@@ -85,9 +85,22 @@ Live Updates::
 The dashboard uses Server-Sent Events (SSE) to receive real-time updates from the daemon.
 Session starts, stops, and status changes appear immediately without a page refresh.
 
-Activity Sparklines::
-Each session row includes a small sparkline chart showing recent activity, making it easy to
-identify idle tunnels or unusually busy connections.
+Session History::
+A stacked area chart covering the last 60 minutes, sampled once a minute (60 samples). It shows
+active sessions only (starting, running, stopping, stalled, and reconnecting), with port-forward
+tunnels as the bottom layer and shells stacked on top, so the top edge is the total. Stopped and
+errored sessions are not counted.
+
+Shell Traffic::
+A chart of bytes received from and sent to instances per minute over the last 60 minutes, for
+shells opened through the dashboard's web terminal. Shells started from the CLI (`gossm connect`)
+and port-forward tunnels are not counted, because their traffic flows directly through the AWS
+session-manager-plugin rather than through gossm. When there has been no web terminal traffic in
+the last hour, a placeholder message is shown.
+
+Traffic Totals::
+Session cards for web terminal shell sessions show running `rx` (received) and `tx` (sent) byte
+totals.
 
 New Session Launch::
 A form on the dashboard allows you to start a new connection by selecting a profile and entering
@@ -105,7 +118,7 @@ the SSM session cleanly.
 
 image::dashboard-full.png[gossm web dashboard,width=800]
 
-The stats bar shows active session count, daemon uptime, and a session history sparkline:
+The stats bar shows the session counters, daemon uptime, and the session history and shell traffic charts:
 
 image::dashboard-stats.png[Dashboard statistics bar,width=800]
 
