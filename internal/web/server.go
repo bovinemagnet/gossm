@@ -49,6 +49,7 @@ func NewServer(sm *session.SessionManager, cfg *config.Config, startedAt time.Ti
 		"portDisplay":         portDisplay,
 		"sessionProbeDisplay": sessionProbeDisplay,
 		"uptimeSince":         uptimeSince,
+		"formatBytes":         formatBytes,
 		"isActiveState":       isActiveState,
 		"dict":                templateDict,
 		"effectiveProbeSecs": func(s session.Session) int {

@@ -45,10 +45,28 @@
     <div class="history-panel">
         <header>
             <h2>Session History</h2>
+            <span class="history-legend">
+                <span class="legend-item legend-item--tunnel">Tunnels</span>
+                <span class="legend-item legend-item--shell">Shells</span>
+            </span>
             <span class="subtitle">last 60m · live</span>
         </header>
         <div class="history-chart">
-            {{if .SparkSVG}}{{.SparkSVG}}{{else}}<div class="form-help" style="margin:auto;">No history yet — start a session to populate this chart.</div>{{end}}
+            {{if .HistorySVG}}{{.HistorySVG}}{{else}}<div class="form-help" style="margin:auto;">No history yet — start a session to populate this chart.</div>{{end}}
+        </div>
+    </div>
+
+    <div class="history-panel">
+        <header>
+            <h2>Shell Traffic</h2>
+            <span class="history-legend">
+                <span class="legend-item legend-item--in">Received</span>
+                <span class="legend-item legend-item--out">Sent</span>
+            </span>
+            <span class="subtitle">web terminals · per minute</span>
+        </header>
+        <div class="history-chart">
+            {{if .TrafficSVG}}{{.TrafficSVG}}{{else}}<div class="form-help" style="margin:auto;">No web terminal traffic in the last hour.</div>{{end}}
         </div>
     </div>
 </section>

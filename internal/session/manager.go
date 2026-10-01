@@ -43,6 +43,14 @@ func defaultTCPProber(ctx context.Context, s *Session) bool {
 	return true
 }
 
+const (
+	// HistoryLength is the number of samples kept for the dashboard history chart.
+	HistoryLength = 60
+	// HistoryInterval is the sampling period, so the chart spans
+	// HistoryLength * HistoryInterval (one hour).
+	HistoryInterval = time.Minute
+)
+
 // SessionManager is a goroutine-safe registry of active SSM sessions.
 type SessionManager struct {
 	mu            sync.RWMutex
@@ -61,9 +69,11 @@ type SessionManager struct {
 	reconnectBackoffMax       time.Duration // upper bound on backoff sleep
 	sleep                     func(time.Duration)
 
-	sparkData  []int // ring buffer of active session counts, last 60 entries
-	sparkIndex int
-	stopCh     chan struct{}
+	history      []HistoryPoint // ring buffer of samples, HistoryLength entries
+	historyIndex int            // next slot to write; also the oldest sample
+	trafficIn    int64          // shell bytes received since the last sample
+	trafficOut   int64          // shell bytes sent since the last sample
+	stopCh       chan struct{}
 }
 
 // New creates a SessionManager.  If builder is nil the default AWS CLI
@@ -86,7 +96,7 @@ func New(builder CommandBuilder, checker ProcessChecker) *SessionManager {
 		reconnectBackoffInitial:   5 * time.Second,
 		reconnectBackoffMax:       60 * time.Second,
 		sleep:                     time.Sleep,
-		sparkData:                 make([]int, 60),
+		history:                   make([]HistoryPoint, HistoryLength),
 		stopCh:                    make(chan struct{}),
 	}
 }
@@ -444,23 +454,54 @@ func (m *SessionManager) SessionCount() int {
 	return len(m.sessions)
 }
 
-// SparkData returns a copy of the sparkline ring buffer.
-func (m *SessionManager) SparkData() []int {
+// History returns a copy of the history ring buffer, oldest sample first.
+func (m *SessionManager) History() []HistoryPoint {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	cp := make([]int, len(m.sparkData))
-	copy(cp, m.sparkData)
-	return cp
+	cp := make([]HistoryPoint, 0, len(m.history))
+	cp = append(cp, m.history[m.historyIndex:]...)
+	return append(cp, m.history[:m.historyIndex]...)
 }
 
-// RecordSparkPoint records the current session count into the ring buffer.
-func (m *SessionManager) RecordSparkPoint() {
+// RecordHistoryPoint samples the active session counts and the traffic
+// accumulated since the previous sample into the history ring buffer.
+func (m *SessionManager) RecordHistoryPoint() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.sparkData[m.sparkIndex] = len(m.sessions)
-	m.sparkIndex = (m.sparkIndex + 1) % len(m.sparkData)
+	p := HistoryPoint{BytesIn: m.trafficIn, BytesOut: m.trafficOut}
+	for _, s := range m.sessions {
+		if !s.State.IsActive() {
+			continue
+		}
+		switch s.Type {
+		case TypeShell:
+			p.Shells++
+		case TypePortForward:
+			p.Tunnels++
+		}
+	}
+	m.trafficIn, m.trafficOut = 0, 0
+	m.history[m.historyIndex] = p
+	m.historyIndex = (m.historyIndex + 1) % len(m.history)
+}
+
+// AddTraffic adds bytes received from (in) and sent to (out) the instance
+// to the session's running totals and the next history sample. Unknown
+// session IDs are ignored.
+func (m *SessionManager) AddTraffic(id string, in, out int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[id]
+	if !ok {
+		return
+	}
+	s.BytesIn += in
+	s.BytesOut += out
+	m.trafficIn += in
+	m.trafficOut += out
 }
 
 // Close stops every tracked session and shuts down monitoring goroutines.

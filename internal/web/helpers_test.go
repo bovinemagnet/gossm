@@ -151,40 +151,90 @@ func TestUptimeSince_Days(t *testing.T) {
 	}
 }
 
-// --- renderSparkSVG tests ---
+// --- renderHistorySVG tests ---
 
-func TestRenderSparkSVG_Empty(t *testing.T) {
-	got := renderSparkSVG(nil)
-	if got != "" {
-		t.Errorf("renderSparkSVG(nil) = %q, want empty", got)
+func TestRenderHistorySVG_Empty(t *testing.T) {
+	if got := renderHistorySVG(nil); got != "" {
+		t.Errorf("renderHistorySVG(nil) = %q, want empty", got)
 	}
 }
 
-func TestRenderSparkSVG_SinglePoint(t *testing.T) {
-	got := renderSparkSVG([]int{5})
+func TestRenderHistorySVG_SinglePoint(t *testing.T) {
+	got := renderHistorySVG([]session.HistoryPoint{{Shells: 1, Tunnels: 2}})
 	if !strings.Contains(got, "<svg") {
 		t.Error("expected SVG output for single point")
 	}
-	if !strings.Contains(got, "polyline") {
-		t.Error("expected polyline element")
+	if strings.Contains(got, "NaN") {
+		t.Error("single point produced NaN coordinates")
 	}
 }
 
-func TestRenderSparkSVG_MultiplePoints(t *testing.T) {
-	got := renderSparkSVG([]int{1, 3, 2, 5, 4})
-	if !strings.Contains(got, "<svg") {
-		t.Error("expected SVG output")
+func TestRenderHistorySVG_StacksShellsOnTunnels(t *testing.T) {
+	got := renderHistorySVG([]session.HistoryPoint{
+		{Shells: 1, Tunnels: 0},
+		{Shells: 2, Tunnels: 3},
+		{Shells: 0, Tunnels: 1},
+	})
+	if !strings.Contains(got, `class="history-tunnels"`) || !strings.Contains(got, `class="history-shells"`) {
+		t.Errorf("expected a tunnel layer and a shell layer; got %s", got)
 	}
-	// Should have multiple coordinate pairs separated by spaces.
-	if !strings.Contains(got, " ") {
-		t.Error("expected multiple points in polyline")
+	// The scale covers the stacked total (2+3), not either series alone.
+	if !strings.Contains(got, ">5</text>") {
+		t.Errorf("expected y-axis max label 5; got %s", got)
+	}
+	if !strings.Contains(got, "last 60 minutes") {
+		t.Error("expected aria label to describe a 60-minute window")
 	}
 }
 
-func TestRenderSparkSVG_AllZeros(t *testing.T) {
-	got := renderSparkSVG([]int{0, 0, 0})
+func TestRenderHistorySVG_AllZeros(t *testing.T) {
+	got := renderHistorySVG(make([]session.HistoryPoint, 3))
 	if !strings.Contains(got, "<svg") {
 		t.Error("expected SVG output for all-zero data")
+	}
+}
+
+// --- renderTrafficSVG tests ---
+
+func TestRenderTrafficSVG_NoTraffic(t *testing.T) {
+	got := renderTrafficSVG(make([]session.HistoryPoint, 3))
+	if got != "" {
+		t.Errorf("renderTrafficSVG(no traffic) = %q, want empty", got)
+	}
+}
+
+func TestRenderTrafficSVG_InAndOut(t *testing.T) {
+	got := renderTrafficSVG([]session.HistoryPoint{
+		{BytesIn: 0, BytesOut: 0},
+		{BytesIn: 2048, BytesOut: 512},
+		{BytesIn: 1024, BytesOut: 0},
+	})
+	if !strings.Contains(got, `class="traffic-in"`) || !strings.Contains(got, `class="traffic-out"`) {
+		t.Errorf("expected received and sent series; got %s", got)
+	}
+	if !strings.Contains(got, ">2.0 KB</text>") {
+		t.Errorf("expected y-axis max label 2.0 KB; got %s", got)
+	}
+}
+
+// --- formatBytes tests ---
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{999, "999 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{5 * 1024 * 1024, "5.0 MB"},
+		{3 * 1024 * 1024 * 1024, "3.0 GB"},
+	}
+	for _, tt := range tests {
+		if got := formatBytes(tt.in); got != tt.want {
+			t.Errorf("formatBytes(%d) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 

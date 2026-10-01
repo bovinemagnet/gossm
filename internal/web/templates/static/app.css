@@ -399,6 +399,30 @@ a:hover { color: var(--accent-strong); }
     font-size: 12px;
 }
 
+.history-legend {
+    display: flex;
+    gap: 14px;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.legend-item::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 3px;
+    margin-right: 6px;
+    vertical-align: middle;
+    border-radius: 2px;
+    background: currentColor;
+}
+
+.legend-item--tunnel::before { background: var(--tunnel); }
+.legend-item--shell::before { background: var(--shell); }
+.legend-item--in::before { background: var(--accent); }
+.legend-item--out::before { background: #f472b6; }
+
 .history-chart {
     background: var(--panel-2);
     border: 1px solid var(--border);

@@ -353,25 +353,82 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 }
 
-func TestSparkData(t *testing.T) {
+func TestHistory_RecordsActiveSessionsByType(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	sm.SetProbe(nil, 0, 0)
+
+	sm.RegisterExternal(testOpts("s1"), 1)
+	sm.RecordHistoryPoint()
+
+	tunnel := testOpts("t1")
+	tunnel.Type = TypePortForward
+	sm.RegisterExternal(tunnel, 2)
+	stoppedID := sm.RegisterExternal(testOpts("s2"), 3)
+	sm.mu.Lock()
+	sm.sessions[stoppedID].State = StateStopped
+	sm.mu.Unlock()
+	sm.RecordHistoryPoint()
+
+	data := sm.History()
+	if len(data) != HistoryLength {
+		t.Fatalf("History length = %d, want %d", len(data), HistoryLength)
+	}
+	// Newest samples sit at the end of the slice.
+	prev, last := data[len(data)-2], data[len(data)-1]
+	if prev.Shells != 1 || prev.Tunnels != 0 {
+		t.Errorf("previous point = %+v, want 1 shell, 0 tunnels", prev)
+	}
+	// The stopped shell must not be counted.
+	if last.Shells != 1 || last.Tunnels != 1 {
+		t.Errorf("last point = %+v, want 1 shell, 1 tunnel", last)
+	}
+}
+
+func TestHistory_OldestFirstAfterWrap(t *testing.T) {
 	sm := New(sleepBuilder(), nil)
 
-	// Record a few points with external sessions to get non-zero values.
+	for i := 0; i < HistoryLength; i++ {
+		sm.RecordHistoryPoint()
+	}
 	sm.RegisterExternal(testOpts("s1"), 1)
-	sm.RecordSparkPoint()
-	sm.RegisterExternal(testOpts("s2"), 2)
-	sm.RecordSparkPoint()
+	sm.RecordHistoryPoint()
 
-	data := sm.SparkData()
-	if len(data) != 60 {
-		t.Fatalf("SparkData length = %d, want 60", len(data))
+	data := sm.History()
+	if data[len(data)-1].Shells != 1 {
+		t.Errorf("newest point = %+v, want 1 shell", data[len(data)-1])
 	}
-	// First two entries should have 1 and 2 sessions respectively.
-	if data[0] != 1 {
-		t.Errorf("sparkData[0] = %d, want 1", data[0])
+	for i, p := range data[:len(data)-1] {
+		if p.Shells != 0 {
+			t.Fatalf("point %d = %+v, want 0 shells (buffer not in chronological order)", i, p)
+		}
 	}
-	if data[1] != 2 {
-		t.Errorf("sparkData[1] = %d, want 2 (but got %d)", data[1], data[1])
+}
+
+func TestAddTraffic(t *testing.T) {
+	sm := New(sleepBuilder(), nil)
+	id := sm.RegisterExternal(testOpts("s1"), 1)
+
+	sm.AddTraffic(id, 10, 20)
+	sm.AddTraffic(id, 5, 1)
+	sm.AddTraffic("unknown", 100, 100)
+
+	s, _ := sm.GetSession(id)
+	if s.BytesIn != 15 || s.BytesOut != 21 {
+		t.Errorf("session bytes = in %d / out %d, want 15 / 21", s.BytesIn, s.BytesOut)
+	}
+
+	sm.RecordHistoryPoint()
+	sm.AddTraffic(id, 7, 0)
+	sm.RecordHistoryPoint()
+
+	data := sm.History()
+	prev, last := data[len(data)-2], data[len(data)-1]
+	if prev.BytesIn != 15 || prev.BytesOut != 21 {
+		t.Errorf("previous point traffic = in %d / out %d, want 15 / 21", prev.BytesIn, prev.BytesOut)
+	}
+	// Each point holds only the traffic since the previous sample.
+	if last.BytesIn != 7 || last.BytesOut != 0 {
+		t.Errorf("last point traffic = in %d / out %d, want 7 / 0", last.BytesIn, last.BytesOut)
 	}
 }
 

@@ -25,6 +25,10 @@
             {{if .Profile}}<span><span class="meta-key">profile</span><span class="mono">{{.Profile}}</span></span>{{end}}
             <span><span class="meta-key">uptime</span>{{uptimeSince .StartedAt}}</span>
             {{if .PID}}<span><span class="meta-key">pid</span><span class="mono">{{.PID}}</span></span>{{end}}
+            {{if or .BytesIn .BytesOut}}
+            <span><span class="meta-key">rx</span><span class="mono">{{formatBytes .BytesIn}}</span></span>
+            <span><span class="meta-key">tx</span><span class="mono">{{formatBytes .BytesOut}}</span></span>
+            {{end}}
             {{if eq (sessionTypeName .Type) "Port Forward"}}
             <span><span class="meta-key">probe</span>{{sessionProbeDisplay .}}</span>
             {{end}}
